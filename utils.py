@@ -17,9 +17,10 @@ def vocab2id(file_path):
         lines = file.readlines()
         tokens = [line.strip() for line in lines]
         voc2id = {}
+        vocab_size = len(tokens)
         for i in range(len(tokens)):
             voc2id[tokens[i]]=i
-        return voc2id
+        return voc2id, vocab_size
 
 def tokenlist2numlist(line, voc2id):
     """
@@ -43,6 +44,8 @@ def timeSince(since, percent):
     es = s / (percent)
     rs = es - s
     return '%s (- %s)' % (asMinutes(s), asMinutes(rs))
+
+
 
 
 

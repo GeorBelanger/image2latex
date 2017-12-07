@@ -56,7 +56,7 @@ parser.add_argument('--learning_rate', type = float, default = 0.001,
 parser.add_argument('--num_layers_encoder', type = int, default = 5,
 	help = 'Number of layers in the bidirectional recurrent neural network used for encoding')
 parser.add_argument('--hidden_dim_encoder', type = int, default = 512)
-parser.add_argument('--max_lenth_encoder', type = int, default = 150)
+parser.add_argument('--max_lenth_encoder', type = int, default = 100)
 
 # Decoder
 parser.add_argument('--output_dim_decoder', type = int, default = 100)
@@ -76,12 +76,11 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer, e
 	#input_length = input_variable.size()[0]
 	#target_length = target_variable.size()[0]
 
-	encoder_outputs = Variable(torch.zeros(max_length, encoder.hidden_dim_encoder))
-	encoder_outputs = encoder_outputs.cuda() if use_cuda else encoder_outputs
+
 
 	images = Variable(images)
-	targets = Variable(targets)
-	targets_eval = Variable(targets_eval)
+	#targets = Variable(targets)
+	#targets_eval = Variable(targets_eval)
 	
 	loss = 0
 
@@ -95,6 +94,14 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer, e
 	#decoder
 	for i in range(len(list_outputs)):
 		encoder_output = list_outputs[i] # output features for every time step
+		encoder_outputs = Variable(torch.zeros(max_length, encoder.batch_size, encoder.hidden_dim_encoder))
+		encoder_outputs = encoder_outputs.cuda() if use_cuda else encoder_outputs
+
+		# The encoder output should be inside the encoder_outputs of size (max_length, batch_size, hidden_dim)
+		for j in range(encoder_output.size(0)):
+			encoder_outputs[j] = encoder_output[j]
+		encoder_outputs = encoder_outputs.permute(1, 0, 2)
+
 		decoder_hidden = list_hiddens[i][0][-1] #do we need only the hidden or also the cell state? #hidden state of last step of encoder (thats why i use [-1]) #shape batch_size, 256)
 
 		use_teacher_forcing = True
@@ -102,10 +109,14 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer, e
 		if use_teacher_forcing:
 			# teacher forcing: feed the target as the next input
 			for di in range(len(targets)):
-				decoder_input = targets.narrow(1,di,di+1) # we want the first, second, etc. targets of each
 
+				
+				decoder_input = targets.narrow(1,di,1) #maybe we dont need this # we want the first, second, etc. targets of each batch 
+				decoder_input = torch.LongTensor(decoder_input.numpy().astype(int)) #convert to longtensor
+				decoder_input = Variable(decoder_input)
 
-				decoder(decoder_input, decoder_hidden, encoder_output)
+				decoder(decoder_input, decoder_hidden, encoder_outputs)
+				#decoder(y_onehot, decoder_hidden, encoder_output)
 				#decoder_output, decoder_hidden, decoder_attention = decoder(decoder_input, decoder_hidden, encoder_output, encoder_outputs)
 
 
@@ -145,7 +156,7 @@ def trainIters(batch_size, cnn, encoder, decoder, data_generator, learning_rate,
 
 	criterion = nn.NLLLoss()
 
-	data_generator.shuffle()	
+	data_generator.shuffle_lines()	
 	
 	for iter in range(1, n_iters+1):
 		images, targets, targets_eval, num_nonzeros, img_paths = data_generator.next_batch(args.batch_size)
@@ -173,17 +184,15 @@ if using a notebook, we can print the results. (showPlot is missing)
 """
 	
 
-
-
-
+# Create data generator
+datagen = DataGen(args.data_base_dir, args.data_path, args.label_path, args.max_aspect_ratio, 
+	args.max_encoder_l_h, args.max_encoder_l_w, args.max_decoder_l)
 
 # Create the modules of the algorithm
 cnn1 = CNN()
 encoder1 = EncoderBRNN(args.batch_size, args.num_layers_encoder, args.hidden_dim_encoder)
-decoder1 = AttnDecoderRNN(args.hidden_dim_encoder//2, args.output_dim_decoder, args.num_layers_decoder, args.max_length_decoder)
-# Create data generator
-datagen = DataGen(args.data_base_dir, args.data_path, args.label_path, args.max_aspect_ratio, 
-	args.max_encoder_l_h, args.max_encoder_l_w, args.max_decoder_l)
+decoder1 = AttnDecoderRNN(args.hidden_dim_encoder//2, args.output_dim_decoder, args.num_layers_decoder, args.max_length_decoder, datagen.vocab_size)
+
 
 if use_cuda:
     cnn1 = ccn1.cuda()

@@ -42,7 +42,7 @@ class DataGen(object):
         self.max_encoder_l_w = max_encoder_l_w
         self.max_decoder_l = max_decoder_l 
         self.min_aspect_ratio = 0.5
-        self.voc2id = vocab2id("../data/latex_vocab.txt")
+        self.voc2id, self.vocab_size = vocab2id("../data/latex_vocab.txt")
 
         # create list that will contain the filenames and the line number of the formula
         self.lines = []
