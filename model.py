@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.nn.functional as F
+import ipdb
 
 
 class CNN(nn.Module):
@@ -143,11 +144,36 @@ class AttnDecoderRNN(nn.Module):
 
 		#self.attn = nn.Linear(self.hidden_size, self.max_length)
 		self.attn = nn.Linear(356, self.max_length)
+		self.attn_combine = nn.Linear(612, self.hidden_size)
+		#self.lstm = nn.LSTM(input_size, hidden_size, num_layers)
+		#self.lstm = nn.LSTM(self.hidden_size, self.hidden_size, self.n_layers)
+		self.lstm = nn.LSTM(self.hidden_size, self.hidden_size)
+		self.out = nn.Linear(self.hidden_size, self.output_size)
 
-	#def forward(self, input, hidden, encoder_output, encoder_outputs):
-	def forward(self, input, hidden, encoder_outputs):
+	def forward(self, input, hidden, cell_state, encoder_outputs):
+
 		embedded = self.embedding(input)
+
 		attn_weights = F.softmax(self.attn(torch.cat((torch.squeeze(embedded),hidden),1))) 
+
 		attn_applied = torch.bmm(attn_weights.unsqueeze(1), encoder_outputs)
 
-		return attn_applied
+		output = torch.cat((embedded.squeeze(), attn_applied.squeeze()),1)
+		output = self.attn_combine(output)
+
+		output = output.unsqueeze(0)
+		#output = output.permute(1, 0, 2)
+		cell_state = cell_state.unsqueeze(0)
+		hidden = hidden.unsqueeze(0)
+
+		ipdb.set_trace()
+		for i in range(self.n_layers):
+			output = F.relu(output)
+			#output = F.relu(output.unsqueeze(1))
+			#maybe the problem is that we only have hidden but we are forgetting the cell state
+			#also try to unsqueeze hidden
+			#output, hidden = self.lstm(output, hidden)
+			
+			output, (hidden, cell_state) = self.lstm(output, (hidden, cell_state))
+		output = F.log_softmax(self.out(output[0]))
+		return output

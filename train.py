@@ -2,7 +2,7 @@
 Training script
 
 """
-import ipdb
+
 import os
 import time
 import argparse
@@ -11,8 +11,8 @@ import ipdb
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
+from random import shuffle
 
-#from cnn import CNN
 from model import CNN
 from model import EncoderBRNN
 from model import AttnDecoderRNN
@@ -67,31 +67,24 @@ parser.add_argument('--max_length_decoder', type = int, default = 100)
 args = parser.parse_args()
 
 def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer, encoder_optimizer, decoder_optimizer, criterion, max_length):
-	# encoder_hidden = encoder.initHidden() # I think it works better if the hidden are initialized in the forward pass
 	  
 	cnn_optimizer.zero_grad()
 	encoder_optimizer.zero_grad()
 	decoder_optimizer.zero_grad()
 
-	#input_length = input_variable.size()[0]
-	#target_length = target_variable.size()[0]
-
-
-
 	images = Variable(images)
-	#targets = Variable(targets)
-	#targets_eval = Variable(targets_eval)
 	
 	loss = 0
 
-	#Forward
-	#convolutional network
+	#Forward Pass
+	#Convolutional network
 	list_rows = cnn(images)
 
-	#encoder
+	#Encoder
+	ipdb.set_trace()
 	list_outputs, list_hiddens = encoder(list_rows) 
 
-	#decoder
+	#Decoder
 	for i in range(len(list_outputs)):
 		encoder_output = list_outputs[i] # output features for every time step
 		encoder_outputs = Variable(torch.zeros(max_length, encoder.batch_size, encoder.hidden_dim_encoder))
@@ -102,7 +95,8 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer, e
 			encoder_outputs[j] = encoder_output[j]
 		encoder_outputs = encoder_outputs.permute(1, 0, 2)
 
-		decoder_hidden = list_hiddens[i][0][-1] #do we need only the hidden or also the cell state? #hidden state of last step of encoder (thats why i use [-1]) #shape batch_size, 256)
+		decoder_hidden = list_hiddens[i][0][-1] #hidden state of last step of encoder (thats why i use [-1]) #shape (batch_size, 256)
+		decoder_cell_state = list_hiddens[i][1][-1]
 
 		use_teacher_forcing = True
 
@@ -115,7 +109,7 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer, e
 				decoder_input = torch.LongTensor(decoder_input.numpy().astype(int)) #convert to longtensor
 				decoder_input = Variable(decoder_input)
 
-				decoder(decoder_input, decoder_hidden, encoder_outputs)
+				a = decoder(decoder_input, decoder_hidden, decoder_cell_state, encoder_outputs)
 				#decoder(y_onehot, decoder_hidden, encoder_output)
 				#decoder_output, decoder_hidden, decoder_attention = decoder(decoder_input, decoder_hidden, encoder_output, encoder_outputs)
 
@@ -155,8 +149,8 @@ def trainIters(batch_size, cnn, encoder, decoder, data_generator, learning_rate,
 	decoder_optimizer = torch.optim.Adam(decoder.parameters(), lr = learning_rate)
 
 	criterion = nn.NLLLoss()
-
-	data_generator.shuffle_lines()	
+	
+	shuffle(data_generator.lines)
 	
 	for iter in range(1, n_iters+1):
 		images, targets, targets_eval, num_nonzeros, img_paths = data_generator.next_batch(args.batch_size)
@@ -185,6 +179,7 @@ if using a notebook, we can print the results. (showPlot is missing)
 	
 
 # Create data generator
+
 datagen = DataGen(args.data_base_dir, args.data_path, args.label_path, args.max_aspect_ratio, 
 	args.max_encoder_l_h, args.max_encoder_l_w, args.max_decoder_l)
 
@@ -199,7 +194,7 @@ if use_cuda:
     encoder1 = encoder1.cuda()
     attn_decoder1 = attn_decoder1.cuda()
 
-ipdb.set_trace()
+#ipdb.set_trace()
 
 trainIters(args.batch_size, cnn1, encoder1, decoder1, datagen, args.learning_rate, n_iters=75000, print_every=5000)
 

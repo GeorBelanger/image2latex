@@ -1,15 +1,6 @@
 """
 Data generator
 
-This file contains the object DataGen. 
-
-The key arguments it receives are the following:
-data_base_dir, which is a folder with the processed images
-label_path, the path of a .lst file with the latex formulas, one per line
-data_path, the path of a .lst file with the name of the image and its corresponding line number
-
-The main functions are the initialization, shuffling and next_batch function
-
 """
 import os
 import numpy as np
@@ -17,12 +8,12 @@ from PIL import Image
 from collections import Counter
 import random, math
 import math
-from random import shuffle
 from scipy import misc
 import linecache
 import ipdb
 import torch
 from utils import vocab2id, tokenlist2numlist
+from collections import defaultdict
 
 
 class DataGen(object):
@@ -55,10 +46,8 @@ class DataGen(object):
             self.lines.append([filename, label]) 
         
         # buffer to save groups of batches with same width and height
-        self.buffer = {} 
-
-    def shuffle_lines(self):
-        shuffle(self.lines)
+        #self.buffer = {} 
+        self.buffer = defaultdict(lambda: defaultdict(list))
 
     def next_batch(self, batch_size):
         for i in range(0,len(self.lines)):
@@ -83,15 +72,13 @@ class DataGen(object):
 
             # if list of tokens is to big, truncate
             if len(label_list) > self.max_decoder_l: 
-                temp = [] 
-                for i in range(self.max_decoder_l): 
-                    temp.append(label_list[i])
-                label_list = temp 
-
+                label_list = label_list[:self.max_decoder_l]
+ 
+            # get aspect_ratio and assure is between max and min aspect ratios defined
             bounds_check = (len(label_list), math.floor(origH/8.0), math.floor(origW/8.0))
             bounds_tuple = (self.max_decoder_l, self.max_encoder_l_h, self.max_encoder_l_w)
             if bounds_check <= bounds_tuple:
-                # get aspect_ratio and assure is between max and min aspect ratios defined
+
                 aspect_ratio = origW / origH 
                 aspect_ratio = min(aspect_ratio, self.max_aspect_ratio) 
                 aspect_ratio = max(aspect_ratio, self.min_aspect_ratio)
