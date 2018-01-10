@@ -20,28 +20,28 @@ class CNN(nn.Module):
 		super(CNN, self).__init__()
 
 		self.layer1CNN = nn.Sequential(
-			nn.Conv2d(in_channels = 1, out_channels = 64, kernel_size = 3, stride = 1, padding = 1), #tensor.shape=(batch_size, 64, imgH, imgW)
+			nn.Conv2d(in_channels = 1, out_channels = 64, kernel_size = 3, stride = 1, padding = 1), 
 			nn.ReLU(),
-			nn.MaxPool2d(kernel_size = 2, stride = 2)) #tensor.shape=batch_size, 64, imgH/2, imgW/2)
+			nn.MaxPool2d(kernel_size = 2, stride = 2)) 
 		self.layer2CNN = nn.Sequential(
-			nn.Conv2d(in_channels = 64, out_channels = 128, kernel_size = 3, stride = 1, padding = 1), #tensor.shape=(batch_size, 128, imgH/2, imgW/2)
+			nn.Conv2d(in_channels = 64, out_channels = 128, kernel_size = 3, stride = 1, padding = 1), 
 			nn.ReLU(),
-			nn.MaxPool2d(kernel_size = 2, stride = 2)) #tensor.shape=(batch_size, 128, imgH/2/2, imgW/2/2)
+			nn.MaxPool2d(kernel_size = 2, stride = 2)) 
 		self.layer3CNN = nn.Sequential(
-			nn.Conv2d(in_channels = 128, out_channels = 256, kernel_size = 3, stride = 1, padding = 1), #tensor.shape=(batch_size, 256, imgH/2/2, imgW/2/2)
+			nn.Conv2d(in_channels = 128, out_channels = 256, kernel_size = 3, stride = 1, padding = 1), 
 			nn.BatchNorm2d(256),
 			nn.ReLU())
 		self.layer4CNN = nn.Sequential(
-			nn.Conv2d(in_channels = 256, out_channels = 256, kernel_size = 3, stride = 1, padding = 1), #tensor.shape=(batch_size, 256, imgH/2/2, imgW/2/2)
+			nn.Conv2d(in_channels = 256, out_channels = 256, kernel_size = 3, stride = 1, padding = 1), 
 			nn.ReLU(),
-			nn.MaxPool2d(kernel_size = (2,1), stride = (2,1), padding = 0)) #kH = 2, kW = 1, #tensor.shape=(batch_size, 256, imgH/2/2/2, imgW/2/2)
+			nn.MaxPool2d(kernel_size = (2,1), stride = (2,1), padding = 0)) 
 		self.layer5CNN = nn.Sequential(
-			nn.Conv2d(in_channels = 256, out_channels = 512, kernel_size = 3, stride = 1, padding = 1), #tensor.shape=(batch_size, 512, imgH/2/2/2, imgW/2/2)
+			nn.Conv2d(in_channels = 256, out_channels = 512, kernel_size = 3, stride = 1, padding = 1), 
 			nn.BatchNorm2d(512),
 			nn.ReLU(),
-			nn.MaxPool2d(kernel_size = (1,2), stride = (1,2), padding = 0)) #kH = 1, kW = 2, #tensor.shape=(batch_size, 512, imgH/2/2/2, imgW/2/2/2)
+			nn.MaxPool2d(kernel_size = (1,2), stride = (1,2), padding = 0)) 
 		self.layer6CNN = nn.Sequential(
-			nn.Conv2d(in_channels = 512, out_channels= 512, kernel_size = 3, stride = 1, padding = 1), #tensor.shape=(batch_size, 512, imgH/2/2/2, imgW/2/2/2)
+			nn.Conv2d(in_channels = 512, out_channels= 512, kernel_size = 3, stride = 1, padding = 1), 
 			nn.BatchNorm2d(512),
 			nn.ReLU())
 
@@ -56,14 +56,14 @@ class CNN(nn.Module):
 		list_rows -- list of #H rows of the image features after passing throught the CNN 
 		Each row has shape (W, batch_size, 512)
 		"""
-		out = self.layer1CNN(x)  #tensor.shape=batch_size, 64, imgH/2, imgW/2)
-		out = self.layer2CNN(out) #tensor.shape=(batch_size, 128, imgH/2/2, imgW/2/2)
-		out = self.layer3CNN(out) #tensor.shape=(batch_size, 256, imgH/2/2, imgW/2/2)
-		out = self.layer4CNN(out) #tensor.shape=(batch_size, 256, imgH/2/2/2, imgW/2/2)
-		out = self.layer5CNN(out) #tensor.shape=(batch_size, 512, imgH/2/2/2, imgW/2/2/2)
-		out = self.layer6CNN(out) #tensor.shape=(batch_size, 512, imgH/2/2/2, imgW/2/2/2) 
-		out = out.permute(2,3,0,1) #If we define H = imgH/8 and W = imgW/8, then tensor.shape = (H, W, batch_size, 512)
-		list_rows = torch.unbind(out, dim = 0) # tuple of size H contaning tensors of shape (W, batch_size, 512)
+		out = self.layer1CNN(x)  
+		out = self.layer2CNN(out) 
+		out = self.layer3CNN(out) 
+		out = self.layer4CNN(out) 
+		out = self.layer5CNN(out) 
+		out = self.layer6CNN(out) 
+		out = out.permute(2,3,0,1) 
+		list_rows = torch.unbind(out, dim = 0) 
 
 		return list_rows
 
@@ -97,9 +97,7 @@ class EncoderBRNN(nn.Module):
 
 		"""
 
-		# Initialize hidden states (this needs to be changed so its also learned by the model)
-		# From paper: in order to capture the sequential order information in vertical direction, 
-		# we use a trainable hidden state V_{h,0}, for each row, which we refer to as positional embedding
+		# Initialize hidden states 
 		# The num_layers is 2*nlayers defined in the self.brnn because its bidirectional
 		hiddens = [(Variable(torch.zeros(2*self.num_layers_encoder, self.batch_size, self.hidden_dim_encoder // 2)), Variable(torch.zeros(2*self.num_layers_encoder, self.batch_size, self.hidden_dim_encoder // 2))) 
 		for i in range(len(list_rows))]
@@ -112,10 +110,12 @@ class EncoderBRNN(nn.Module):
 		for i, row in enumerate(list_rows):
 			output, hidden = self.brnn(row, hiddens[i])
 			
-			list_outputs.append(output) #take the last hidden state of the rnn (if backprop doesnt work with append, use torch.cat)
+			list_outputs.append(output) 
 			list_hiddens.append(hidden)
 
-		return list_outputs, list_hiddens
+		outputs = torch.cat(list_outputs, 0)
+	
+		return outputs
 
 	def initHidden(self):
 		result = [(Variable(torch.zeros(2*self.num_layers_encoder, self.batch_size, self.hidden_dim_encoder // 2)), Variable(torch.zeros(2*self.num_layers_encoder, self.batch_size, self.hidden_dim_encoder // 2))) 
@@ -141,39 +141,26 @@ class AttnDecoderRNN(nn.Module):
 		self.max_length = max_length
 		self.vocab_size = vocab_size
 		self.embedding = nn.Embedding(self.vocab_size, self.output_size)
-
-		#self.attn = nn.Linear(self.hidden_size, self.max_length)
-		self.attn = nn.Linear(356, self.max_length)
-		self.attn_combine = nn.Linear(612, self.hidden_size)
-		#self.lstm = nn.LSTM(input_size, hidden_size, num_layers)
-		#self.lstm = nn.LSTM(self.hidden_size, self.hidden_size, self.n_layers)
-		self.lstm = nn.LSTM(self.hidden_size, self.hidden_size)
-		self.out = nn.Linear(self.hidden_size, self.output_size)
+		self.attn = nn.Linear(1512, self.max_length)
+		self.attn_combine = nn.Linear(1512, 2 * self.hidden_size)
+		self.lstm = nn.LSTM(2*self.hidden_size, 2*self.hidden_size)
+		self.out = nn.Linear(2*self.hidden_size, self.vocab_size) 
 
 	def forward(self, input, hidden, cell_state, encoder_outputs):
-
-		embedded = self.embedding(input)
-
-		attn_weights = F.softmax(self.attn(torch.cat((torch.squeeze(embedded),hidden),1))) 
-
-		attn_applied = torch.bmm(attn_weights.unsqueeze(1), encoder_outputs)
-
-		output = torch.cat((embedded.squeeze(), attn_applied.squeeze()),1)
+		# create attention weights and apply it to output
+		embedded = self.embedding(input).squeeze()
+		attn_weights = F.softmax(self.attn(torch.cat((embedded, hidden),1)))
+		attn_applied = torch.bmm(attn_weights.unsqueeze(1), encoder_outputs.permute(1,0,2)).squeeze()
+		output = torch.cat((embedded, attn_applied),1)
 		output = self.attn_combine(output)
 
 		output = output.unsqueeze(0)
-		#output = output.permute(1, 0, 2)
 		cell_state = cell_state.unsqueeze(0)
 		hidden = hidden.unsqueeze(0)
 
-		ipdb.set_trace()
+		# pass through the LSTM
 		for i in range(self.n_layers):
 			output = F.relu(output)
-			#output = F.relu(output.unsqueeze(1))
-			#maybe the problem is that we only have hidden but we are forgetting the cell state
-			#also try to unsqueeze hidden
-			#output, hidden = self.lstm(output, hidden)
-			
 			output, (hidden, cell_state) = self.lstm(output, (hidden, cell_state))
 		output = F.log_softmax(self.out(output[0]))
-		return output
+		return output, hidden.squeeze()
