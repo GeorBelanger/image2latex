@@ -116,7 +116,7 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer, e
 			decoder_eval = targets_eval.narrow(1,di,1) 
 			decoder_eval = torch.LongTensor(decoder_eval.numpy().astype(int)) 
 			decoder_eval = Variable(decoder_eval.squeeze())
-			ipdb.set_trace()
+			
 			decoder_output, decoder_hidden = decoder(decoder_input, decoder_hidden, decoder_cell_state, encoder_outputs)
 
 			loss += criterion(decoder_output, decoder_eval)
