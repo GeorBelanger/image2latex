@@ -7,6 +7,7 @@ import os
 import numpy
 import time
 import math
+import linecache
 
 
 def vocab2id(file_path):
@@ -44,6 +45,28 @@ def timeSince(since, percent):
     es = s / (percent)
     rs = es - s
     return '%s (- %s)' % (asMinutes(s), asMinutes(rs))
+
+class Tokenizer():
+    def __init__(self):
+        self.vocab2id = {"<SOS>":0, "<EOS>":1}
+        self.id2vocab = ["<SOS>", "<EOS>"]
+
+    def add_token_to_vocab(self, token):
+        if token not in self.vocab2id:
+            self.id2vocab.append(token)
+            self.vocab2id[token]=len(self.id2vocab)-1
+        return self.vocab2id[token]
+
+    def tokenize(self, path, line_number):
+        label_list_tokens = linecache.getline(path, int(str(line_number))).split()
+        label_list_tokens.insert(0, "<SOS>") 
+        label_list_tokens.append("<EOS>")
+
+        ids = []
+        for token in label_list_tokens:
+            self.add_token_to_vocab(token)
+            ids.append(self.vocab2id[token])
+        return ids
 
 
 

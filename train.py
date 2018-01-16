@@ -6,7 +6,7 @@ Training script
 import os
 import time
 import argparse
-from data_gen import DataGen
+from data_gen import DataLoader
 import ipdb
 import torch
 import torch.nn as nn
@@ -129,7 +129,7 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer, e
 	return loss.data[0]/len(targets)
 
 
-def trainIters(batch_size, cnn, encoder, decoder, data_generator, learning_rate, n_iters, print_every):
+def trainIters(batch_size, cnn, encoder, decoder, data_loader, learning_rate, n_iters, print_every):
 	start = time.time()
 	print_losses = []
 	print_loss_total = 0
@@ -141,10 +141,12 @@ def trainIters(batch_size, cnn, encoder, decoder, data_generator, learning_rate,
 
 	criterion = nn.NLLLoss()
 	
-	shuffle(data_generator.lines)
+	shuffle(data_loader.lines)
+	data_generator = data_loader.create_data_generator(args.batch_size)
 	
 	for iter in range(1, n_iters+1):
-		images, targets, targets_eval, num_nonzeros, img_paths = data_generator.next_batch(args.batch_size)
+		images, targets, targets_eval, num_nonzeros, img_paths = data_generator.next()
+		ipdb.set_trace()
 		loss = train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer, encoder_optimizer, decoder_optimizer, criterion, args.max_lenth_encoder)
 
 		print_loss_total += loss
@@ -159,19 +161,19 @@ def trainIters(batch_size, cnn, encoder, decoder, data_generator, learning_rate,
 	return print_losses
 
 # Create data generator
-datagen = DataGen(args.data_base_dir, args.data_path, args.label_path, args.max_aspect_ratio, 
+dataloader = DataLoader(args.data_base_dir, args.data_path, args.label_path, args.max_aspect_ratio, 
 	args.max_encoder_l_h, args.max_encoder_l_w, args.max_decoder_l)
 
 # Create the modules of the algorithm
 cnn1 = CNN()
 encoder1 = EncoderBRNN(args.batch_size, args.num_layers_encoder, args.hidden_dim_encoder)
-decoder1 = AttnDecoderRNN(args.hidden_dim_encoder//2, args.output_dim_decoder, args.num_layers_decoder, args.max_length_decoder, datagen.vocab_size)
+decoder1 = AttnDecoderRNN(args.hidden_dim_encoder//2, args.output_dim_decoder, args.num_layers_decoder, args.max_length_decoder, dataloader.vocab_size)
 
 if use_cuda:
     cnn1 = ccn1.cuda()
     encoder1 = encoder1.cuda()
     attn_decoder1 = attn_decoder1.cuda()
 
-trainIters(args.batch_size, cnn1, encoder1, decoder1, datagen, args.learning_rate, n_iters=75000, print_every=10)
+trainIters(args.batch_size, cnn1, encoder1, decoder1, dataloader, args.learning_rate, n_iters=75000, print_every=10)
 
 
