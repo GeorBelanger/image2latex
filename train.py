@@ -141,12 +141,10 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader, learning_rate, n_
 
 	criterion = nn.NLLLoss()
 	
-	shuffle(data_loader.lines)
-	data_generator = data_loader.create_data_generator(args.batch_size)
+	data_generator = data_loader.create_data_generator(args.batch_size, args.data_path)
 	
 	for iter in range(1, n_iters+1):
 		images, targets, targets_eval, num_nonzeros, img_paths = data_generator.next()
-		ipdb.set_trace()
 		loss = train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer, encoder_optimizer, decoder_optimizer, criterion, args.max_lenth_encoder)
 
 		print_loss_total += loss
@@ -155,13 +153,14 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader, learning_rate, n_
 			print_loss_avg = print_loss_total / print_every
 			print_losses.append(print_loss_avg)
 			print_loss_total = 0
+
 			print('%s (%d %d%%) %.4f' % (timeSince(start, iter/float(n_iters)),
-				iter, iter / n_iters * 100, print_loss_avg))
+				iter, iter / float(n_iters) * 100, print_loss_avg))
 	
 	return print_losses
 
-# Create data generator
-dataloader = DataLoader(args.data_base_dir, args.data_path, args.label_path, args.max_aspect_ratio, 
+# Create data loader
+dataloader = DataLoader(args.data_base_dir, args.label_path, args.max_aspect_ratio, 
 	args.max_encoder_l_h, args.max_encoder_l_w, args.max_decoder_l)
 
 # Create the modules of the algorithm

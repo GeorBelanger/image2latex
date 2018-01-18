@@ -6,24 +6,21 @@ import os
 import numpy as np
 from PIL import Image
 from collections import Counter
-import random
+from random import shuffle
 import math
 from scipy import misc
 import ipdb
 import torch
-from utils import vocab2id, tokenlist2numlist, Tokenizer
+from utils import vocab2id, Tokenizer
 from collections import defaultdict
 
 
 class DataLoader(object):
 
-    def __init__(self, data_base_dir, data_path, 
-        label_path, max_aspect_ratio, max_encoder_l_h, max_encoder_l_w, max_decoder_l):
+    def __init__(self, data_base_dir, label_path, max_aspect_ratio, max_encoder_l_h, max_encoder_l_w, max_decoder_l):
 
         # folder with processed images
         self.data_base_dir = data_base_dir 
-        # .lst file with name of the image and number
-        self.data_path = data_path 
         # .lst file with formulas
         self.label_path = label_path 
         self.max_width = 10000
@@ -35,24 +32,28 @@ class DataLoader(object):
         self.voc2id, self.vocab_size = vocab2id("../data/latex_vocab.txt")
         self.tokenizer = Tokenizer()
 
-        # create list that will contain the filenames and the line number of the formula
-        with open(self.data_path, 'r') as file:
-            lines_read = file.readlines()
-            self.lines = [list(line.split()) for line in lines_read] 
-
         # buffer to save groups of batches with same width and height
         self.buffer = defaultdict(lambda: defaultdict(list))
-        
-    def create_data_generator(self, batch_size):
-        for i in range(0,len(self.lines)):
 
+    def read_directory(self, path):
+        # create list that will contain the filenames and the line number of the formula
+        with open(path, 'r') as file:
+            lines_read = file.readlines()
+            image_list = [list(line.split()) for line in lines_read] 
+            shuffle(image_list)
+            return image_list
+        
+    def create_data_generator(self, batch_size, directory_path):
+        image_list = self.read_directory(directory_path)
+
+        for i in range(0,len(image_list)):
             # Get the image path and read the image
-            img_path = self.lines[i][0] 
+            img_path = image_list[i][0] 
             img = misc.imread("../data/images_processed/"+ img_path) 
             # Convert image to grayscale (the shape of the function changes from (h,w,3) to (h,w))
             img = np.average(img, weights = [0.299, 0.587, 0.114], axis = 2)
             # Get the formula number and save it to a list (add start of sequence and end of sequence tokens)
-            label_str = self.lines[i][1] 
+            label_str = image_list[i][1] 
             #tokenize function
             label_list = self.tokenizer.tokenize(self.label_path, label_str)
 
@@ -109,7 +110,7 @@ class DataLoader(object):
                     #restart buffer
                     self.buffer[imgW][imgH] = [] 
                     yield images, targets, targets_eval, num_nonzeros, img_paths 
-                if i == len(self.lines)-1:
+                if i == len(image_list)-1:
                     for imgW in self.buffer:
                         for imgH in self.buffer[imgW]:
                             l = len(self.buffer[imgW][imgH])

@@ -8,30 +8,7 @@ import numpy
 import time
 import math
 import linecache
-
-
-def vocab2id(file_path):
-    """
-    Creates a dictionary vocab2id based on the file latex_vocab.txt 
-    """
-    with open(file_path, 'r') as file:
-        lines = file.readlines()
-        tokens = [line.strip() for line in lines]
-        voc2id = {}
-        vocab_size = len(tokens)
-        for i in range(len(tokens)):
-            voc2id[tokens[i]]=i
-        return voc2id, vocab_size
-
-def tokenlist2numlist(line, voc2id):
-    """
-    Function that converts a list of tokens into its list of ids
-    """
-    num_list = []
-    for token in line:
-        num_list.append(voc2id[token])
-    return num_list
-
+import datetime
 
 def asMinutes(s):
     m = math.floor(s / 60)
@@ -40,11 +17,17 @@ def asMinutes(s):
 
 
 def timeSince(since, percent):
+    """
+    Function that calculates the time spent and estimated time left for training 
+    based on the percentage of iterations processed so far
+    """
     now = time.time()
     s = now - since
+    # estimated total time
     es = s / (percent)
+    # estimated time remaining
     rs = es - s
-    return '%s (- %s)' % (asMinutes(s), asMinutes(rs))
+    return '%s (- %s)' % (str(datetime.timedelta(seconds=s)), str(datetime.timedelta(seconds=rs)))
 
 class Tokenizer():
     def __init__(self):
@@ -68,7 +51,18 @@ class Tokenizer():
             ids.append(self.vocab2id[token])
         return ids
 
-
+def vocab2id(file_path):
+    """
+    Creates a dictionary vocab2id based on the file latex_vocab.txt 
+    """
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+        tokens = [line.strip() for line in lines]
+        voc2id = {}
+        vocab_size = len(tokens)
+        for i in range(len(tokens)):
+            voc2id[tokens[i]]=i
+        return voc2id, vocab_size
 
 
 
