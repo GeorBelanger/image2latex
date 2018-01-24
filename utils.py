@@ -10,12 +10,6 @@ import math
 import linecache
 import datetime
 
-def asMinutes(s):
-    m = math.floor(s / 60)
-    s -= m * 60
-    return '%dm %ds' % (m, s)
-
-
 def timeSince(since, percent):
     """
     Function that calculates the time spent and estimated time left for training 

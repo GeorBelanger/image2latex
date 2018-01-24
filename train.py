@@ -35,13 +35,13 @@ parser.add_argument('--vocabulary', type=str, default='../data/latex_vocab.txt',
 	help = 'Path of file with the latex vocabulary, one per line')
 
 # Max and mins for data generator
-parser.add_argument('--max_aspect_ratio', type = float, default = 10000,
+parser.add_argument('--max_aspect_ratio', type = float, default = 10,
 	help = 'Maximum permited aspect ratio of images' )
-parser.add_argument('--max_encoder_l_h', type = float, default = 10000,
+parser.add_argument('--max_encoder_l_h', type = float, default = 20,
 	help = 'Maximum permited size for the image height')
-parser.add_argument('--max_encoder_l_w', type = float, default = 10000,
+parser.add_argument('--max_encoder_l_w', type = float, default = 64,
 	help = 'Maximum permited size for the image width')
-parser.add_argument('--max_decoder_l', type = float, default = 10000,
+parser.add_argument('--max_decoder_l', type = float, default = 150,
 	help = 'Maximum permited size (number of tokens) for the associated latex formula')
 
 # Hyperparameters
