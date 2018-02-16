@@ -122,7 +122,11 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
 
     if use_teacher_forcing:
         # teacher forcing: feed the target as the next input
-        for di in range(len(targets)):
+        # save values for evaluation
+        predicted_index = []
+        actual_index = []
+
+        for di in range(targets.size(1)):
 
             # Take the di-th target for each batch
             decoder_input = targets.narrow(1, di, 1)
@@ -141,12 +145,16 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
 
             loss += criterion(decoder_output, decoder_eval)
 
+            # save values for evaluation
+            predicted_index.append(torch.max(decoder_output.data, 1)[1][0][0])
+            actual_index.append(decoder_eval.data[0])
+
         loss.backward()
         cnn_optimizer.step()
         encoder_optimizer.step()
         decoder_optimizer.step()
 
-    return loss.data[0]/len(targets)
+    return loss.data[0]/len(targets), predicted_index, actual_index
 
 
 def trainIters(batch_size, cnn, encoder, decoder, data_loader, learning_rate,
@@ -170,9 +178,14 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader, learning_rate,
     for iter in range(1, n_iters+1):
         (images, targets, targets_eval,
          num_nonzer, img_paths) = data_generator.next()
-        loss = train(images, targets, targets_eval, cnn, encoder, decoder,
-                     cnn_optimizer, encoder_optimizer, decoder_optimizer,
-                     criterion, args.max_lenth_encoder)
+        loss, predicted_index, actual_index = train(images, targets,
+                                                    targets_eval, cnn,
+                                                    encoder,
+                                                    decoder, cnn_optimizer,
+                                                    encoder_optimizer,
+                                                    decoder_optimizer,
+                                                    criterion,
+                                                    args.max_lenth_encoder)
 
         print_loss_total += loss
 
@@ -184,6 +197,11 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader, learning_rate,
             print('%s (%d %d%%) %.4f' % (timeSince(start, iter/float(n_iters)),
                                          iter, iter / float(n_iters) * 100,
                                          print_loss_avg))
+
+            print("Predicted Tokens")
+            print([data_loader.tokenizer.id2vocab[i] for i in predicted_index])
+            print("Actual Tokens")
+            print([data_loader.tokenizer.id2vocab[i] for i in actual_index])
 
     return print_losses
 
