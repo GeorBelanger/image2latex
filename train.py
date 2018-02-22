@@ -35,6 +35,12 @@ parser.add_argument('--data_path', type=str,
 parser.add_argument('--vocabulary', type=str,
                     default='../data/latex_vocab.txt',
                     help='Path of file with the latex vocab, one per line')
+parser.add_argument('--save_cnn', type=str,  default='cnn_model.pt',
+                    help='path to save the CNN model')
+parser.add_argument('--save_encoder', type=str,  default='encoder_model.pt',
+                    help='path to save the BRNN encoder model')
+parser.add_argument('--save_decoder', type=str,  default='decoder_model.pt',
+                    help='path to save the attention decoder model')
 
 # Max and mins for data generator
 parser.add_argument('--max_aspect_ratio', type=float,
@@ -72,12 +78,14 @@ args = parser.parse_args()
 
 
 def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
-          encoder_optimizer, decoder_optimizer, criterion, max_length):
+          encoder_optimizer, decoder_optimizer, criterion, max_length,
+          use_cuda):
     cnn_optimizer.zero_grad()
     encoder_optimizer.zero_grad()
     decoder_optimizer.zero_grad()
 
     images = Variable(images)
+    images = images.cuda() if use_cuda else images
 
     loss = 0
 
@@ -100,7 +108,9 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
     # Calculate the first hidden vector of the decoder LSTM
     img_mean = encoder_outputs.sum(0)
     W1 = Variable(torch.zeros(512, 512))
+    W1 = W1.cuda() if use_cuda else W1
     b1 = Variable(torch.zeros(512, 1))
+    b1 = b1.cuda() if use_cuda else b1
     m = nn.Tanh()
 
     decoder_hidden = m(torch.mm(img_mean.squeeze(),
@@ -111,7 +121,9 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
 
     # Calculate the first cell state of the decoder LSTM
     W2 = Variable(torch.zeros(512, 512))
+    W2 = W2.cuda() if use_cuda else W2
     b2 = Variable(torch.zeros(512, 1))
+    b2 = b2.cuda() if use_cuda else b2
     decoder_cell_state = m(torch.mm(img_mean.squeeze(), W2) +
                            b2.transpose(0,
                                         1).expand_as(torch.mm(
@@ -132,11 +144,13 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
             decoder_input = targets.narrow(1, di, 1)
             decoder_input = torch.LongTensor(decoder_input.numpy().astype(int))
             decoder_input = Variable(decoder_input)
+            decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
             # Take the di-th target_eval for each batch
             decoder_eval = targets_eval.narrow(1, di, 1)
             decoder_eval = torch.LongTensor(decoder_eval.numpy().astype(int))
             decoder_eval = Variable(decoder_eval.squeeze())
+            decoder_eval = decoder_eval.cuda() if use_cuda else decoder_eval
 
             decoder_output, decoder_hidden = decoder(decoder_input,
                                                      decoder_hidden,
@@ -158,7 +172,7 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
 
 
 def trainIters(batch_size, cnn, encoder, decoder, data_loader, learning_rate,
-               n_iters, print_every):
+               n_iters, print_every, use_cuda):
     start = time.time()
     print_losses = []
     print_loss_total = 0
@@ -174,6 +188,7 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader, learning_rate,
 
     data_generator = data_loader.create_data_generator(args.batch_size,
                                                        args.data_path)
+    best_loss = None
 
     for iter in range(1, n_iters+1):
         (images, targets, targets_eval,
@@ -185,7 +200,8 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader, learning_rate,
                                                     encoder_optimizer,
                                                     decoder_optimizer,
                                                     criterion,
-                                                    args.max_lenth_encoder)
+                                                    args.max_lenth_encoder,
+                                                    use_cuda)
 
         print_loss_total += loss
 
@@ -203,6 +219,14 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader, learning_rate,
             print("Actual Tokens")
             print([data_loader.tokenizer.id2vocab[i] for i in actual_index])
 
+        if not best_loss or print_loss_avg < best_loss:
+            with open(args.save_cnn, 'wb') as f:
+                torch.save(cnn, f)
+            with open(args.save_encoder, 'wb') as f:
+                torch.save(encoder, f)
+            with open(args.save_decoder, 'wb') as f:
+                torch.save(decoder, f)
+
     return print_losses
 
 
@@ -214,7 +238,7 @@ dataloader = DataLoader(args.data_base_dir, args.label_path,
 # Create the modules of the algorithm
 cnn1 = CNN()
 encoder1 = EncoderBRNN(args.batch_size, args.num_layers_encoder,
-                       args.hidden_dim_encoder)
+                       args.hidden_dim_encoder, use_cuda)
 decoder1 = AttnDecoderRNN(args.hidden_dim_encoder//2, args.output_dim_decoder,
                           args.num_layers_decoder, args.max_length_decoder,
                           dataloader.vocab_size)
@@ -225,4 +249,5 @@ if use_cuda:
     attn_decoder1 = attn_decoder1.cuda()
 
 trainIters(args.batch_size, cnn1, encoder1, decoder1, dataloader,
-           args.learning_rate, n_iters=75000, print_every=10)
+           args.learning_rate, n_iters=75000, print_every=10,
+           use_cuda=use_cuda)

@@ -71,13 +71,15 @@ class EncoderBRNN(nn.Module):
     """Create a bidirectional recurrent neural network
     (using Long-Short Term Memory cells) to encode the
     rows of the features that the convolutional network generated"""
-    def __init__(self, batch_size, num_layers_encoder, hidden_dim_encoder):
+    def __init__(self, batch_size, num_layers_encoder, hidden_dim_encoder,
+                 use_cuda):
         super(EncoderBRNN, self).__init__()
         self.hidden_dim_encoder = 512
         self.num_layers_encoder = num_layers_encoder
         self.batch_size = batch_size
         self.brnn = nn.LSTM(512, hidden_dim_encoder // 2,
                             num_layers_encoder, bidirectional=True)
+        self.use_cuda = use_cuda
 
     def forward(self, list_rows):
         """Make the forward pass for the Bidirectional RNN
@@ -103,6 +105,7 @@ class EncoderBRNN(nn.Module):
                                         self.batch_size,
                                         self.hidden_dim_encoder // 2)))
                    for i in range(len(list_rows))]
+        hiddens = hiddens.cuda() if self.use_cuda else hiddens
 
         # List for outputs of encoder
         list_outputs = []
