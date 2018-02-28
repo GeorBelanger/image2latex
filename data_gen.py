@@ -10,6 +10,7 @@ import ipdb
 import torch
 from utils import vocab2id, Tokenizer, read_formulas_directory
 from collections import defaultdict
+import imageio
 
 
 class DataLoader(object):
@@ -70,7 +71,7 @@ class DataLoader(object):
         for i in range(0, len(image_list)):
             # Get the image path and read the image
             img_path = image_list[i][0]
-            img = misc.imread("../data/images_processed/" + img_path)
+            img = imageio.imread("../data/images_processed/" + img_path)
             # Convert color image to grayscale
             # (the shape of the image object changes from (h,w,3) to (h,w))
             rgb2gray_weights = [0.299, 0.587, 0.114]
