@@ -28,9 +28,9 @@ parser.add_argument('--data_base_dir', type=str,
 parser.add_argument('--label_path', type=str,
                     default='../data/im2latex_formulas.norm.lst',
                     help='Path of file with the latex formulas, one per line')
-parser.add_argument('--data_path', type=str,
+parser.add_argument('--train_path', type=str,
                     default="../data/im2latex_train_filter.lst",
-                    help='Path of file with the name of the image and its \
+                    help='Path of train file with the name of the image and its \
                           corresponding line number')
 parser.add_argument('--vocabulary', type=str,
                     default='../data/latex_vocab.txt',
@@ -44,13 +44,13 @@ parser.add_argument('--save_decoder', type=str,  default='decoder_model.pt',
 
 # Max and mins for data generator
 parser.add_argument('--max_aspect_ratio', type=float,
-                    default=10, help='Maximum permited aspect ratio of images')
+                    default=10, help='Maximum permitted aspect ratio of images')
 parser.add_argument('--max_encoder_l_h', type=float, default=20,
-                    help='Maximum permited size for the image height')
+                    help='Maximum permitted size for the image height')
 parser.add_argument('--max_encoder_l_w', type=float, default=64,
-                    help='Maximum permited size for the image width')
+                    help='Maximum permitted size for the image width')
 parser.add_argument('--max_decoder_l', type=float, default=150,
-                    help='Maximum permited size (number of tokens) for the \
+                    help='Maximum permitted size (number of tokens) for the \
                           associated latex formula')
 
 # Hyperparameters
@@ -152,27 +152,33 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
             decoder_eval = Variable(decoder_eval.squeeze())
             decoder_eval = decoder_eval.cuda() if use_cuda else decoder_eval
 
-            decoder_output, decoder_hidden = decoder(decoder_input,
-                                                     decoder_hidden,
-                                                     decoder_cell_state,
-                                                     encoder_outputs)
+            decoder_output, decoder_hidden, decoder_cell_state = decoder(decoder_input,
+                                                                         decoder_hidden,
+                                                                         decoder_cell_state,
+                                                                         encoder_outputs)
 
             loss += criterion(decoder_output, decoder_eval)
 
             # save values for evaluation
-            predicted_index.append(torch.max(decoder_output.data, 1)[1][0][0])
-            actual_index.append(decoder_eval.data[0])
+            if use_cuda:
+                predicted_index.append(torch.max(decoder_output.data, 1)[1][0])
+                actual_index.append(decoder_eval.data[0])
+            else:
+                predicted_index.append(torch.max(decoder_output.data,
+                                                 1)[1][0][0])
+                actual_index.append(decoder_eval.data[0])
 
         loss.backward()
         cnn_optimizer.step()
         encoder_optimizer.step()
         decoder_optimizer.step()
 
-    return loss.data[0]/len(targets), predicted_index, actual_index
+    return loss.data[0]/targets.size(1), predicted_index, actual_index
 
 
-def trainIters(batch_size, cnn, encoder, decoder, data_loader, learning_rate,
-               n_iters, print_every, use_cuda):
+def trainIters(batch_size, cnn, encoder, decoder, data_loader,
+               learning_rate, n_iters, print_every,
+               use_cuda):
     start = time.time()
     print_losses = []
     print_loss_total = 0
@@ -187,7 +193,8 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader, learning_rate,
     criterion = nn.NLLLoss()
 
     data_generator = data_loader.create_data_generator(args.batch_size,
-                                                       args.data_path)
+                                                       args.train_path)
+
     best_loss = None
 
     for iter in range(1, n_iters+1):
@@ -244,9 +251,9 @@ decoder1 = AttnDecoderRNN(args.hidden_dim_encoder//2, args.output_dim_decoder,
                           dataloader.vocab_size)
 
 if use_cuda:
-    cnn1 = ccn1.cuda()
+    cnn1 = cnn1.cuda()
     encoder1 = encoder1.cuda()
-    attn_decoder1 = attn_decoder1.cuda()
+    decoder1 = decoder1.cuda()
 
 trainIters(args.batch_size, cnn1, encoder1, decoder1, dataloader,
            args.learning_rate, n_iters=75000, print_every=10,

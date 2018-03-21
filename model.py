@@ -52,7 +52,7 @@ class CNN(nn.Module):
         Arguments:
         x -- input data of shape (batch_size, 1, imgH, imgW)
         Returns:
-        list_rows -- list of #H rows of the image features after
+        list of #H rows of the image features after
         passing throught the CNN
         Each row has shape (W, batch_size, 512)"""
         out = self.layer1CNN(x)
@@ -70,7 +70,14 @@ class CNN(nn.Module):
 class EncoderBRNN(nn.Module):
     """Create a bidirectional recurrent neural network
     (using Long-Short Term Memory cells) to encode the
-    rows of the features that the convolutional network generated"""
+    rows of the features that the convolutional network generated
+    Arguments:
+        batch_size (int): size of the batch
+        num_layers_encoder (int): number of layers of the encoder
+        hidden_dim_encoder (int): hidden dimension for the encoder
+        use_cuda (boolean): indicates whether the model is using a GPU
+
+    """
     def __init__(self, batch_size, num_layers_encoder, hidden_dim_encoder,
                  use_cuda):
         super(EncoderBRNN, self).__init__()
@@ -84,28 +91,37 @@ class EncoderBRNN(nn.Module):
     def forward(self, list_rows):
         """Make the forward pass for the Bidirectional RNN
         Arguments:
-        list_rows -- list of H rows of the image features after
-        passing through the CNN
-        Each row has shape (W, batch_size, 512)
-        (H and W are the integral part of the original height
-        and width of the image divided by 8)
+            list_rows -- list of H rows of the image features after
+            passing through the CNN
+            Each row has shape (W, batch_size, 512)
+            (H and W are the integral part of the original height
+            and width of the image divided by 8)
         Returns:
-        list_output -- list of H tensor of shape (W, batch_size, 512)
-        Each tensor is the output that the Bidirectional RNN generated for
-        each row in list_rows for each point in time t = 1, 2, ..., W
-        (H and W are the integral part of the original height and
-        width of the image divided by 8)"""
+            list of H tensor of shape (W, batch_size, 512)
+            Each tensor is the output that the Bidirectional RNN generated for
+            each row in list_rows for each point in time t = 1, 2, ..., W
+            (H and W are the integral part of the original height and
+            width of the image divided by 8)"""
 
         # Initialize hidden states
         # The number of layers used is 2*num_layers_encoder
         # because its a bidirectional RNN
-        hiddens = [(Variable(torch.zeros(2*self.num_layers_encoder,
-                   self.batch_size, self.hidden_dim_encoder // 2)),
-                   Variable(torch.zeros(2*self.num_layers_encoder,
-                                        self.batch_size,
-                                        self.hidden_dim_encoder // 2)))
-                   for i in range(len(list_rows))]
-        hiddens = hiddens.cuda() if self.use_cuda else hiddens
+        # enable Variables of hidden state to be used by CUDA
+
+        if self.use_cuda:
+            hiddens = [(Variable(torch.zeros(2*self.num_layers_encoder,
+                       list_rows[0].size(1), self.hidden_dim_encoder // 2)).cuda(),
+                       Variable(torch.zeros(2*self.num_layers_encoder,
+                                            list_rows[0].size(1),
+                                            self.hidden_dim_encoder // 2)).cuda())
+                       for i in range(len(list_rows))]
+        else:
+            hiddens = [(Variable(torch.zeros(2*self.num_layers_encoder,
+                       list_rows[0].size(1), self.hidden_dim_encoder // 2)),
+                       Variable(torch.zeros(2*self.num_layers_encoder,
+                                            list_rows[0].size(1),
+                                            self.hidden_dim_encoder // 2)))
+                       for i in range(len(list_rows))]
 
         # List for outputs of encoder
         list_outputs = []
@@ -124,7 +140,16 @@ class EncoderBRNN(nn.Module):
 
 
 class AttnDecoderRNN(nn.Module):
-    """Create the recurrent neural network decoder with attention"""
+    """Create the recurrent neural network decoder with an attention mechanism
+    Arguments:
+        hidden_size (int): hidden size of the decoder
+        output_size (int): output size of the decoder
+        n_layers (int): number of layers of the decoder
+        max_length: maximum length of encoder_outputs
+        vocab_size: size of vocabulary of tokens
+    Returns:
+
+    """
 
     def __init__(self,
                  hidden_size,
@@ -145,6 +170,13 @@ class AttnDecoderRNN(nn.Module):
         self.out = nn.Linear(2*self.hidden_size, self.vocab_size)
 
     def forward(self, input, hidden, cell_state, encoder_outputs):
+        """Make the forward pass for the decoder network
+        Arguments:
+            input (tensor size=(batch_size, 1)): actual tokens of the last step
+            hidden (tensor size=(batch_size, hidden_dim_encoder)): hidden tensor for the lstm
+            cell_state (tensor size=(batch_size, hidden_dim_encoder)): cell state for the lstm
+            encoder_outputs (tensor size=(max_length, batch_size, hidden_dim_encoder)): outputs of the encoder
+        """
         # create attention weights and apply it to output
         embedded = self.embedding(input).squeeze()
         attn_weights = F.softmax(self.attn(torch.cat((embedded, hidden), 1)))
@@ -163,4 +195,5 @@ class AttnDecoderRNN(nn.Module):
             output, (hidden, cell_state) = self.lstm(output,
                                                      (hidden, cell_state))
         output = F.log_softmax(self.out(output[0]))
-        return output, hidden.squeeze()
+
+        return output, hidden.squeeze(), cell_state.squeeze()
