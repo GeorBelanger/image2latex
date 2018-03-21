@@ -1,5 +1,3 @@
-"""Data generator"""
-
 import os
 import numpy as np
 from PIL import Image
@@ -14,6 +12,15 @@ import imageio
 
 
 class DataLoader(object):
+    """Load the images and labels from the database and process into batches
+    Attributes:
+        data_base_dir (str): Folder with the processed images
+        label_path (str): File with latex math formulas
+        max_aspect_ratio (int): Maximum aspect ratio (width/height) for images
+        max_encoder_l_h (int): Maximum size for the images height
+        max_encoder_l_w (int): Maximum size for the images width
+        max_decoder_l (int): Maximum number of tokens for the latex formula
+    """
 
     def __init__(self,
                  data_base_dir,
@@ -33,13 +40,19 @@ class DataLoader(object):
         self.max_encoder_l_w = max_encoder_l_w
         self.max_decoder_l = max_decoder_l
         self.min_aspect_ratio = 0.5
-        self.voc2id, self.vocab_size = vocab2id("../data/latex_vocab.txt")
+        self.vocab_size = 1000
         self.tokenizer = Tokenizer()
-
         # buffer to save groups of batches with same width and height
         self.buffer = defaultdict(lambda: defaultdict(list))
 
     def process_batch(self, buf, img_width, img_height):
+        """ Return a batch of images with labels and take it out of the buffer
+        Args:
+            buf (:obj:dict:dict:list): object containing images according
+                                       to the images size and width
+            img_width (int): size of the image's width in the batch
+            img_height (int): size of the image's height in the batch
+        """
         # store images and targets in tensors
         batch_size = len(buf[img_width][img_height])
         images = torch.Tensor(batch_size, 1, img_height, img_width)
@@ -66,6 +79,12 @@ class DataLoader(object):
         return images, targets, targets_eval, num_nonzer, img_paths
 
     def create_data_generator(self, batch_size, directory_path):
+        """ Create a generator that will yield the images and labels
+        Args:
+            batch_size (int): size of the batch to generate
+            directory_path (string): path of the file containing
+                                     filenames of the images and formulas
+        """
         image_list = read_formulas_directory(directory_path)
 
         for i in range(0, len(image_list)):
@@ -103,19 +122,19 @@ class DataLoader(object):
                 imgH = origH
 
                 self.buffer[imgW][imgH].append([img, label_list, img_path])
-
                 # when buffer reaches batch_size,
                 # return images and targets as tensors
                 if len(self.buffer[imgW][imgH]) == batch_size:
                     images, targets, targets_eval, num_nonzer, img_paths = (
-                     self.process_batch(self.buffer, imgW, imgH)
-                     )
+                     self.process_batch(self.buffer, imgW, imgH))
                     yield images, targets, targets_eval, num_nonzer, img_paths
 
                 # when we have gone through all the lines,
                 # return incomplete batches stored in buffer
                 if i == len(image_list)-1:
-                    images, targets, targets_eval, num_nonzer, img_paths = (
-                     self.process_batch(self.buffer, imgW, imgH)
-                     )
-                    yield images, targets, targets_eval, num_nonzer, img_paths
+                    for imgW in self.buffer:
+                        for imgH in self.buffer[imgW]:
+                            if len(self.buffer[imgW][imgH]) > 0:
+                                images, targets, targets_eval, num_nonzer, img_paths = (
+                                 self.process_batch(self.buffer, imgW, imgH))
+                                yield images, targets, targets_eval, num_nonzer, img_paths
