@@ -28,7 +28,8 @@ class DataLoader(object):
                  max_aspect_ratio,
                  max_encoder_l_h,
                  max_encoder_l_w,
-                 max_decoder_l):
+                 max_decoder_l,
+                 max_vocab_size):
 
         # folder with processed images
         self.data_base_dir = data_base_dir
@@ -40,7 +41,7 @@ class DataLoader(object):
         self.max_encoder_l_w = max_encoder_l_w
         self.max_decoder_l = max_decoder_l
         self.min_aspect_ratio = 0.5
-        self.vocab_size = 1000
+        self.vocab_size = max_vocab_size
         self.tokenizer = Tokenizer()
         # buffer to save groups of batches with same width and height
         self.buffer = defaultdict(lambda: defaultdict(list))
