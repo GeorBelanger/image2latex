@@ -72,21 +72,41 @@ class EncoderBRNN(nn.Module):
     (using Long-Short Term Memory cells) to encode the
     rows of the features that the convolutional network generated
     Arguments:
-        batch_size (int): size of the batch
         num_layers_encoder (int): number of layers of the encoder
         hidden_dim_encoder (int): hidden dimension for the encoder
         use_cuda (boolean): indicates whether the model is using a GPU
 
     """
-    def __init__(self, batch_size, num_layers_encoder, hidden_dim_encoder,
+    def __init__(self, num_layers_encoder, hidden_dim_encoder,
                  use_cuda):
         super(EncoderBRNN, self).__init__()
-        self.hidden_dim_encoder = 512
+        self.hidden_dim_encoder = hidden_dim_encoder
         self.num_layers_encoder = num_layers_encoder
-        self.batch_size = batch_size
         self.brnn = nn.LSTM(512, hidden_dim_encoder // 2,
                             num_layers_encoder, bidirectional=True)
         self.use_cuda = use_cuda
+
+    def init_hidden_cell(self, list_rows, num_layers_encoder,
+                         hidden_dim_encoder):
+        # Initialize hidden states
+        # The number of layers used is 2*num_layers_encoder
+        # because its a bidirectional RNN
+        # enable Variables of hidden state to be used by CUDA
+        if self.use_cuda:
+            hiddens = [(Variable(torch.zeros(2*num_layers_encoder,
+                       list_rows[0].size(1), hidden_dim_encoder // 2)).cuda(),
+                       Variable(torch.zeros(2*num_layers_encoder,
+                                            list_rows[0].size(1),
+                                            hidden_dim_encoder // 2)).cuda())
+                       for i in range(len(list_rows))]
+        else:
+            hiddens = [(Variable(torch.zeros(2*num_layers_encoder,
+                       list_rows[0].size(1), hidden_dim_encoder // 2)),
+                       Variable(torch.zeros(2*num_layers_encoder,
+                                            list_rows[0].size(1),
+                                            hidden_dim_encoder // 2)))
+                       for i in range(len(list_rows))]
+        return hiddens
 
     def forward(self, list_rows):
         """Make the forward pass for the Bidirectional RNN
@@ -103,25 +123,8 @@ class EncoderBRNN(nn.Module):
             (H and W are the integral part of the original height and
             width of the image divided by 8)"""
 
-        # Initialize hidden states
-        # The number of layers used is 2*num_layers_encoder
-        # because its a bidirectional RNN
-        # enable Variables of hidden state to be used by CUDA
-
-        if self.use_cuda:
-            hiddens = [(Variable(torch.zeros(2*self.num_layers_encoder,
-                       list_rows[0].size(1), self.hidden_dim_encoder // 2)).cuda(),
-                       Variable(torch.zeros(2*self.num_layers_encoder,
-                                            list_rows[0].size(1),
-                                            self.hidden_dim_encoder // 2)).cuda())
-                       for i in range(len(list_rows))]
-        else:
-            hiddens = [(Variable(torch.zeros(2*self.num_layers_encoder,
-                       list_rows[0].size(1), self.hidden_dim_encoder // 2)),
-                       Variable(torch.zeros(2*self.num_layers_encoder,
-                                            list_rows[0].size(1),
-                                            self.hidden_dim_encoder // 2)))
-                       for i in range(len(list_rows))]
+        hiddens = self.init_hidden_cell(list_rows, self.num_layers_encoder,
+                                        self.hidden_dim_encoder)
 
         # List for outputs of encoder
         list_outputs = []
@@ -147,8 +150,6 @@ class AttnDecoderRNN(nn.Module):
         n_layers (int): number of layers of the decoder
         max_length: maximum length of encoder_outputs
         vocab_size: size of vocabulary of tokens
-    Returns:
-
     """
 
     def __init__(self,
@@ -156,7 +157,8 @@ class AttnDecoderRNN(nn.Module):
                  output_size,
                  n_layers,
                  max_length,
-                 vocab_size):
+                 vocab_size,
+                 use_cuda):
         super(AttnDecoderRNN, self).__init__()
         self.hidden_size = hidden_size
         self.output_size = output_size
@@ -168,8 +170,18 @@ class AttnDecoderRNN(nn.Module):
         self.attn_combine = nn.Linear(1512, 2 * self.hidden_size)
         self.lstm = nn.LSTM(2*self.hidden_size, 2*self.hidden_size)
         self.out = nn.Linear(2*self.hidden_size, self.vocab_size)
+        self.use_cuda = use_cuda
+        # self.last_hidden = torch.zeros(hidden_size)
+        # self.last_cell = torch.zeros(hidden_size)
 
-    def forward(self, input, hidden, cell_state, encoder_outputs):
+    def init_hidden_cell(self, batch_size, hidden_dim):
+        hidden = Variable(torch.zeros(batch_size, hidden_dim))
+        hidden = hidden.cuda() if self.use_cuda else hidden
+        cell = Variable(torch.zeros(batch_size, hidden_dim))
+        cell = cell.cuda() if self.use_cuda else cell
+        return (hidden, cell)
+
+    def forward(self, input, encoder_outputs, hidden=None, cell_state=None, init_hidden=False):
         """Make the forward pass for the decoder network
         Arguments:
             input (tensor size=(batch_size, 1)): actual tokens of the last step
@@ -177,17 +189,26 @@ class AttnDecoderRNN(nn.Module):
             cell_state (tensor size=(batch_size, hidden_dim_encoder)): cell state for the lstm
             encoder_outputs (tensor size=(max_length, batch_size, hidden_dim_encoder)): outputs of the encoder
         """
+        if hidden is None:
+            hidden = self.last_hidden
+        if cell_state is None:
+            cell_state = self.last_cell
+        if init_hidden:
+            hidden, cell = self.init_hidden_cell()
+
         # create attention weights and apply it to output
-        embedded = self.embedding(input).squeeze()
+        embedded = self.embedding(input).squeeze(1)
         attn_weights = F.softmax(self.attn(torch.cat((embedded, hidden), 1)))
         attn_applied = torch.bmm(attn_weights.unsqueeze(1),
-                                 encoder_outputs.permute(1, 0, 2)).squeeze()
+                                 encoder_outputs.permute(1, 0, 2)).squeeze(1)
         output = torch.cat((embedded, attn_applied), 1)
         output = self.attn_combine(output)
 
         output = output.unsqueeze(0)
         cell_state = cell_state.unsqueeze(0)
         hidden = hidden.unsqueeze(0)
+        self.last_cell = cell_state
+        self.last_hidden = hidden
 
         # pass through the LSTM
         for i in range(self.n_layers):
@@ -196,4 +217,4 @@ class AttnDecoderRNN(nn.Module):
                                                      (hidden, cell_state))
         output = F.log_softmax(self.out(output[0]))
 
-        return output, hidden.squeeze(), cell_state.squeeze()
+        return output, hidden.squeeze(0), cell_state.squeeze(0)
