@@ -70,3 +70,9 @@ def read_formulas_directory(path):
         image_list = [list(line.split()) for line in lines_read]
         shuffle(image_list)
         return image_list
+
+
+def make_one_hot_vector_from_index(index, vocab_size):
+    one_hot = numpy.zeros((vocab_size, 1))
+    one_hot[index] = 1
+    return one_hot
