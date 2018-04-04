@@ -121,9 +121,6 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
 
     if use_teacher_forcing:
         # teacher forcing: feed the target as the next input
-        # save values for evaluation
-        predicted_index = []
-        actual_index = []
 
         for di in range(targets.size(1)):
 
@@ -138,7 +135,7 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
             decoder_eval = torch.LongTensor(decoder_eval.numpy().astype(int))
             decoder_eval = Variable(decoder_eval.squeeze())
             decoder_eval = decoder_eval.cuda() if use_cuda else decoder_eval
-            # ipdb.set_trace()
+
             decoder_output, decoder_hidden, decoder_cell_state = decoder(decoder_input,
                                                                          encoder_outputs,
                                                                          decoder_hidden,
@@ -146,21 +143,12 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
 
             loss += criterion(decoder_output, decoder_eval)
 
-            # save values for evaluation
-            if use_cuda:
-                predicted_index.append(torch.max(decoder_output.data, 1)[1][0])
-                actual_index.append(decoder_eval.data[0])
-            else:
-                predicted_index.append(torch.max(decoder_output.data,
-                                                 1)[1][0][0])
-                actual_index.append(decoder_eval.data[0])
-
         loss.backward()
         cnn_optimizer.step()
         encoder_optimizer.step()
         decoder_optimizer.step()
 
-    return loss.data[0]/targets.size(1), predicted_index, actual_index
+    return loss.data[0]/targets.size(1)
 
 
 def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
@@ -223,28 +211,28 @@ def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
             # get the last element of the sequence we just appended to
             associated_sequence = sequences[beam_index][0]
             associated_sequence_score = sequences[beam_index][1]
-            # decoder_input = make_one_hot_vector_from_index(associated_sequence[-1], decoder.vocab_size)
-            # decoder_input = make_one_hot_vector_from_index(sequences[beam_index][0][-1], vocab_size)
-            decoder_input = Variable(torch.LongTensor([[associated_sequence[-1]]]))
-            decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
-            last_hidden = sequences[beam_index][2]
-            last_cell = sequences[beam_index][3]
+            if associated_sequence[-1] == 1:
+                new_sequences.append(sequences[beam_index])
+            else:
+                decoder_input = Variable(torch.LongTensor([[associated_sequence[-1]]]))
+                decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
-            # decoder_output is [prob_for_vocab_element_1, prob_for_vocab_element_2, etc.]
-            decoder_output, decoder_hidden, decoder_cell_state = decoder(decoder_input,
-                                                                         encoder_outputs,
-                                                                         last_hidden,
-                                                                         last_cell)
+                last_hidden = sequences[beam_index][2]
+                last_cell = sequences[beam_index][3]
 
-            # Take the top 5 most probable vocab tokens
-            top_beam_size = torch.topk(decoder_output, beam_size)
+                # decoder_output is [prob_for_vocab_element_1, prob_for_vocab_element_2, etc.]
+                decoder_output, decoder_hidden, decoder_cell_state = decoder(decoder_input,
+                                                                             encoder_outputs,
+                                                                             last_hidden,
+                                                                             last_cell)
 
-            # for top_candidate in top_beam_size:
-            #    new_sequences.append(associated_sequence + top_candidate, associated_sequence_score*top_candidate[0].data, decoder_hidden, decoder_cell_state)
-            for j in range(0, beam_size):
-                new_sequences.append((associated_sequence + [top_beam_size[1][0].data[j]], associated_sequence_score*-top_beam_size[0][0].data[j],
-                                      decoder_hidden, decoder_cell_state))
+                # Take the top 5 most probable vocab tokens
+                top_beam_size = torch.topk(decoder_output, beam_size)
+
+                for j in range(0, beam_size):
+                    new_sequences.append((associated_sequence + [top_beam_size[1][0].data[j]], associated_sequence_score*-top_beam_size[0][0].data[j],
+                                          decoder_hidden, decoder_cell_state))
 
         # maybe these have to go out of the loop
         sorted_new_sequences = sorted(new_sequences, key=lambda x: x[1])
@@ -289,17 +277,12 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader,
     best_loss = None
 
     for iter in range(1, n_iters+1):
-        (images, targets, targets_eval,
-         num_nonzer, img_paths) = data_generator.next()
-        loss, predicted_index, actual_index = train(images, targets,
-                                                    targets_eval, cnn,
-                                                    encoder,
-                                                    decoder, cnn_optimizer,
-                                                    encoder_optimizer,
-                                                    decoder_optimizer,
-                                                    criterion,
-                                                    args.max_length_encoder,
-                                                    use_cuda)
+        (images, targets, targets_eval, num_nonzer,
+         img_paths) = next(data_generator)
+        loss = train(images, targets, targets_eval, cnn, encoder,
+                     decoder, cnn_optimizer, encoder_optimizer,
+                     decoder_optimizer, criterion,
+                     args.max_length_encoder, use_cuda)
 
         print_loss_total += loss
 
@@ -323,7 +306,8 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader,
                                                      criterion,
                                                      args.max_length_encoder,
                                                      use_cuda)
-
+            print("Image Path")
+            print(img_paths)
             print("Predicted Tokens")
             print([data_loader.tokenizer.id2vocab[i] for i in predicted_index])
             print("Actual Tokens")

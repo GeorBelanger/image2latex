@@ -165,9 +165,11 @@ class AttnDecoderRNN(nn.Module):
         self.n_layers = n_layers
         self.max_length = max_length
         self.vocab_size = vocab_size
-        self.embedding = nn.Embedding(self.vocab_size, self.output_size)
-        self.attn = nn.Linear(1512, self.max_length)
-        self.attn_combine = nn.Linear(1512, 2 * self.hidden_size)
+        self.embedding = nn.Embedding(self.vocab_size, 2*self.hidden_size)
+        #self.attn = nn.Linear(1512, self.max_length)
+        # self.attn = nn.Linear(1001, self.output_size)
+        self.attn = nn.Linear(4*self.hidden_size, 2*self.hidden_size)
+        #self.attn_combine = nn.Linear(1512, 2 * self.hidden_size)
         self.lstm = nn.LSTM(2*self.hidden_size, 2*self.hidden_size)
         self.out = nn.Linear(2*self.hidden_size, self.vocab_size)
         self.use_cuda = use_cuda
@@ -175,13 +177,18 @@ class AttnDecoderRNN(nn.Module):
         # self.last_cell = torch.zeros(hidden_size)
 
     def init_hidden_cell(self, batch_size, hidden_dim):
-        hidden = Variable(torch.zeros(batch_size, hidden_dim))
+        hidden = Variable(torch.zeros(1, batch_size, hidden_dim))
         hidden = hidden.cuda() if self.use_cuda else hidden
-        cell = Variable(torch.zeros(batch_size, hidden_dim))
+        cell = Variable(torch.zeros(1, batch_size, hidden_dim))
         cell = cell.cuda() if self.use_cuda else cell
         return (hidden, cell)
 
-    def forward(self, input, encoder_outputs, hidden=None, cell_state=None, init_hidden=False):
+    def forward(self,
+                input,
+                encoder_outputs,
+                hidden=None,
+                cell_state=None,
+                init_hidden=False):
         """Make the forward pass for the decoder network
         Arguments:
             input (tensor size=(batch_size, 1)): actual tokens of the last step
@@ -197,24 +204,25 @@ class AttnDecoderRNN(nn.Module):
             hidden, cell = self.init_hidden_cell()
 
         # create attention weights and apply it to output
-        embedded = self.embedding(input).squeeze(1)
-        attn_weights = F.softmax(self.attn(torch.cat((embedded, hidden), 1)))
-        attn_applied = torch.bmm(attn_weights.unsqueeze(1),
-                                 encoder_outputs.permute(1, 0, 2)).squeeze(1)
-        output = torch.cat((embedded, attn_applied), 1)
-        output = self.attn_combine(output)
+        embedded = self.embedding(input)
+        encoder_outputs_and_hidden = torch.cat((hidden.repeat(self.max_length, 1, 1), encoder_outputs), 2)
+        attn_weights = F.softmax(self.attn(encoder_outputs_and_hidden))
+        attn_applied = attn_weights*encoder_outputs
+        # output = self.attn_combine(output)
+        # Permuting because encoder rnn ouputs as MxBatch_SizexN, but our linear NN ouputs Batch_SizexMxN
+        input_and_attended_encoder_output = torch.cat((embedded.permute(1, 0, 2), attn_applied), 0)
 
-        output = output.unsqueeze(0)
-        cell_state = cell_state.unsqueeze(0)
-        hidden = hidden.unsqueeze(0)
+        input_and_attended_encoder_output = input_and_attended_encoder_output
+        cell_state = cell_state
+        hidden = hidden
         self.last_cell = cell_state
         self.last_hidden = hidden
 
-        # pass through the LSTM
-        for i in range(self.n_layers):
-            output = F.relu(output)
-            output, (hidden, cell_state) = self.lstm(output,
-                                                     (hidden, cell_state))
+        # pass through the LSTM/
+
+        output, (hidden, cell_state) = self.lstm(input_and_attended_encoder_output,
+                                                 (hidden, cell_state))
+        output = F.relu(output)
         output = F.log_softmax(self.out(output[0]))
 
-        return output, hidden.squeeze(0), cell_state.squeeze(0)
+        return output, hidden, cell_state
