@@ -57,7 +57,7 @@ parser.add_argument('--max_encoder_l_w', type=float, default=64,
 parser.add_argument('--max_decoder_l', type=float, default=150,
                     help='Maximum permited size (number of tokens) for the \
                           associated latex formula')
-parser.add_argument('--max_vocab_size', type=float, default=1000,
+parser.add_argument('--max_vocab_size', type=float, default=500,
                     help='Maximum number of tokens in vocabulary')
 # Hyperparameters
 parser.add_argument('--num_epochs', type=int, default=5,
@@ -117,38 +117,42 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
     # Calculate the first hidden vector of the decoder LSTM
     (decoder_hidden, decoder_cell_state) = decoder.init_hidden_cell(batch_size, encoder.hidden_dim_encoder)
 
-    use_teacher_forcing = True
+    # for di in range(targets.size(1)):
 
-    if use_teacher_forcing:
-        # teacher forcing: feed the target as the next input
+    #     # Take the di-th target for each batch
+    #     decoder_input = targets.narrow(1, di, 1)
+    #     decoder_input = torch.LongTensor(decoder_input.numpy().astype(int))
+    #     decoder_input = Variable(decoder_input)
+    #     decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
-        for di in range(targets.size(1)):
+    #     # Take the di-th target_eval for each batch
+    #     decoder_eval = targets_eval.narrow(1, di, 1)
+    #     decoder_eval = torch.LongTensor(decoder_eval.numpy().astype(int))
+    #     decoder_eval = Variable(decoder_eval.squeeze())
+    #     decoder_eval = decoder_eval.cuda() if use_cuda else decoder_eval
 
-            # Take the di-th target for each batch
-            decoder_input = targets.narrow(1, di, 1)
-            decoder_input = torch.LongTensor(decoder_input.numpy().astype(int))
-            decoder_input = Variable(decoder_input)
-            decoder_input = decoder_input.cuda() if use_cuda else decoder_input
+    # loss += criterion(decoder_output, decoder_eval)
+    decoder_output, decoder_hidden, decoder_cell_state = decoder(Variable(targets),
+                                                                 encoder_outputs,
+                                                                 decoder_hidden,
+                                                                 decoder_cell_state)
+    longest_target = targets.size()[1]
+    decoder_output_important = decoder_output[:int(longest_target)]
 
-            # Take the di-th target_eval for each batch
-            decoder_eval = targets_eval.narrow(1, di, 1)
-            decoder_eval = torch.LongTensor(decoder_eval.numpy().astype(int))
-            decoder_eval = Variable(decoder_eval.squeeze())
-            decoder_eval = decoder_eval.cuda() if use_cuda else decoder_eval
+    targets_output_view = Variable(targets_eval.long()).view(-1)
+    print(targets_output_view.size())
+    print(decoder_output_important.size())
+    decoder_output_view = decoder_output_important.view(targets_output_view.size()[0], -1)
 
-            decoder_output, decoder_hidden, decoder_cell_state = decoder(decoder_input,
-                                                                         encoder_outputs,
-                                                                         decoder_hidden,
-                                                                         decoder_cell_state)
+    loss += criterion(decoder_output_view, targets_output_view)
+    # print("Line 145 sample.py, about to call backwards")
+    # print(torch.cuda.memory_allocated())
+    loss.backward()
+    cnn_optimizer.step()
+    encoder_optimizer.step()
+    decoder_optimizer.step()
 
-            loss += criterion(decoder_output, decoder_eval)
-
-        loss.backward()
-        cnn_optimizer.step()
-        encoder_optimizer.step()
-        decoder_optimizer.step()
-
-    return loss.data[0]/targets.size(1)
+    return loss.data[0]
 
 
 def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
@@ -267,7 +271,7 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader,
     decoder_optimizer = torch.optim.Adam(decoder.parameters(),
                                          lr=learning_rate)
 
-    criterion = nn.NLLLoss()
+    criterion = nn.NLLLoss(ignore_index=0)
 
     data_generator = data_loader.create_data_generator(args.batch_size,
                                                        args.train_path)
@@ -297,9 +301,10 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader,
                                          print_loss_avg))
 
             (images, targets, targets_eval,
-             num_nonzer, img_paths) = data_generator2.next()
+             num_nonzer, img_paths) = next(data_generator2)
 
             # call evaluate function with beam search
+            """
             predicted_index, actual_index = evaluate(images, targets,
                                                      targets_eval, cnn,
                                                      encoder, decoder,
@@ -312,7 +317,7 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader,
             print([data_loader.tokenizer.id2vocab[i] for i in predicted_index])
             print("Actual Tokens")
             print([data_loader.tokenizer.id2vocab[i] for i in actual_index])
-
+            """
         if not best_loss or print_loss_avg < best_loss:
             with open(args.save_cnn, 'wb') as f:
                 torch.save(cnn.state_dict(), f)
@@ -339,7 +344,7 @@ dataloader_eval = DataLoader(args.data_base_dir, args.label_path,
 cnn1 = CNN()
 encoder1 = EncoderBRNN(args.num_layers_encoder,
                        args.hidden_dim_encoder, use_cuda)
-decoder1 = AttnDecoderRNN(args.hidden_dim_encoder//2, args.output_dim_decoder,
+decoder1 = AttnDecoderRNN(args.hidden_dim_encoder, args.output_dim_decoder,
                           args.num_layers_decoder, args.max_length_decoder,
                           dataloader.vocab_size, use_cuda)
 
@@ -349,5 +354,5 @@ if use_cuda:
     decoder1 = decoder1.cuda()
 
 trainIters(args.batch_size, cnn1, encoder1, decoder1, dataloader, dataloader_eval,
-           args.learning_rate, n_iters=75000, print_every=1,
+           args.learning_rate, n_iters=15000, print_every=1,
            use_cuda=use_cuda)
