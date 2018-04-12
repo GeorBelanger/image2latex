@@ -158,23 +158,26 @@ class AttnDecoderRNN(nn.Module):
                  n_layers,
                  max_length,
                  vocab_size,
+                 embedding_size,
                  use_cuda):
         super(AttnDecoderRNN, self).__init__()
+        # Keep parameters for reference
         self.hidden_size = hidden_size
-        self.output_size = output_size
         self.n_layers = n_layers
         self.max_length = max_length
         self.vocab_size = vocab_size
-        self.embedding = nn.Embedding(self.vocab_size, 2*self.hidden_size)
-        #self.attn = nn.Linear(1512, self.max_length)
-        # self.attn = nn.Linear(1001, self.output_size)
-        self.attn = nn.Linear(4*self.hidden_size, 2*self.hidden_size)
-        #self.attn_combine = nn.Linear(1512, 2 * self.hidden_size)
-        self.lstm = nn.LSTM(2*self.hidden_size, 2*self.hidden_size)
-        self.out = nn.Linear(2*self.hidden_size, self.vocab_size)
         self.use_cuda = use_cuda
-        # self.last_hidden = torch.zeros(hidden_size)
-        # self.last_cell = torch.zeros(hidden_size)
+        self.embedding_size = embedding_size
+
+        # Define layers
+        self.embedding = nn.Embedding(self.vocab_size, self.embedding_size)
+        self.lstm = nn.LSTM(self.embedding_size + self.hidden_size, self.hidden_size)
+        self.output_context_layer = nn.Linear(2*self.hidden_size, self.hidden_size)
+        self.output_layer = nn.Linear(self.hidden_size, self.vocab_size)
+        self.tanh_act = nn.Tanh()
+
+        # Create attention mechanism
+        self.attn = Attn(hidden_size, max_length, use_cuda)
 
     def init_hidden_cell(self, batch_size, hidden_dim):
         hidden = Variable(torch.zeros(1, batch_size, hidden_dim))
@@ -183,46 +186,82 @@ class AttnDecoderRNN(nn.Module):
         cell = cell.cuda() if self.use_cuda else cell
         return (hidden, cell)
 
+    def init_context_output(self, batch_size, hidden_dim):
+        context_output = Variable(torch.zeros(1, batch_size, hidden_dim))
+        context_output = context_output.cuda() if self.use_cuda else context_output
+        return context_output
+
     def forward(self,
                 input,
-                encoder_outputs,
-                hidden=None,
-                cell_state=None,
-                init_hidden=False):
-        """Make the forward pass for the decoder network
-        Arguments:
+                last_output_context,
+                last_hidden,
+                last_cell_state,
+                encoder_outputs):
+        """Arguments:
             input (tensor size=(batch_size, 1)): actual tokens of the last step
             hidden (tensor size=(batch_size, hidden_dim_encoder)): hidden tensor for the lstm
             cell_state (tensor size=(batch_size, hidden_dim_encoder)): cell state for the lstm
             encoder_outputs (tensor size=(max_length, batch_size, hidden_dim_encoder)): outputs of the encoder
         """
-        if hidden is None:
-            hidden = self.last_hidden
-        if cell_state is None:
-            cell_state = self.last_cell
-        if init_hidden:
-            hidden, cell = self.init_hidden_cell()
+        # Note: we run this one step at a time
 
-        # create attention weights and apply it to output
-        embedded = self.embedding(input)
-        encoder_outputs_and_hidden = torch.cat((hidden.repeat(self.max_length, 1, 1), encoder_outputs), 2)
-        attn_weights = F.softmax(self.attn(encoder_outputs_and_hidden))
-        attn_applied = attn_weights*encoder_outputs
-        # output = self.attn_combine(output)
-        # Permuting because encoder rnn ouputs as MxBatch_SizexN, but our linear NN ouputs Batch_SizexMxN
-        input_and_attended_encoder_output = torch.cat((embedded.permute(1, 0, 2), attn_applied), 0)
+        # Get the embedding of the current input word (last output word)
+        token_embedded = self.embedding(input)
 
-        input_and_attended_encoder_output = input_and_attended_encoder_output
-        cell_state = cell_state
-        hidden = hidden
-        self.last_cell = cell_state
-        self.last_hidden = hidden
+        # Permute token_embedded to have size 1xBatch_sizexHidden_dim
+        token_embedded = token_embedded.permute(1, 0, 2)
 
-        # pass through the LSTM/
+        # Combine embedded input word and last context, run through LSTM
+        rnn_input = torch.cat((token_embedded, last_output_context), 2)
+        rnn_output, (hidden, cell_state) = self.lstm(rnn_input,
+                                                     (last_hidden, last_cell_state))
 
-        output, (hidden, cell_state) = self.lstm(input_and_attended_encoder_output,
-                                                 (hidden, cell_state))
-        output = F.relu(output)
-        output = F.log_softmax(self.out(output[0]))
+        # Calculate attention from current RNN state and all encoder outputs
+        attn_weights = self.attn(rnn_output, encoder_outputs)
 
-        return output, hidden, cell_state
+        # Apply attention to encoder outputs to get context
+        # Permuting is made to have batch matrix multiplication with correct dimensions
+        # torch.bmm(batch_sizeX1xencoder_size, batch_sizeXencoder_sizeXhidden_dim)
+        context = torch.bmm(attn_weights.permute(2, 1, 0), encoder_outputs.permute(1, 0, 2))
+
+        # Calculate context output layer
+        # Permuting is made to have context with dim 1Xbatch_sizeXhidden_dim
+        context_output = self.output_context_layer(torch.cat((hidden, context.permute(1, 0, 2)), 2))
+        context_output = self.tanh_act(context_output)
+
+        # Final output layer (next token prediction) using the RNN hidden state
+        output = F.log_softmax(self.output_layer(context_output).squeeze(0), dim=1)
+        return output, context_output, hidden, cell_state
+
+
+class Attn(nn.Module):
+    def __init__(self, hidden_size, max_length, use_cuda):
+        super(Attn, self).__init__()
+        self.hidden_size = hidden_size
+        self.attn_layer = nn.Linear(self.hidden_size*2, self.hidden_size)
+        # self.beta = nn.Parameter(torch.FloatTensor(hidden_size, 1))
+        self.beta = nn.Parameter(torch.randn(hidden_size, 1))
+        self.tanh = nn.Tanh()
+        self.use_cuda = use_cuda
+
+    def forward(self, hidden, encoder_outputs):
+        seq_len = encoder_outputs.size()[0]
+        batch_size = encoder_outputs.size()[1]
+
+        # Create variable to store attention energies
+        attn_energies = Variable(torch.zeros(seq_len, batch_size, 1))
+
+        # Calculate energies for encoder outputs
+        for i in range(seq_len):
+            attn_energies[i] = self.score(hidden, encoder_outputs[i])
+
+        # Normalize energies to weights in range 0 to 1
+        attn_weights = F.softmax(attn_energies.permute(0, 2, 1))
+        attn_weights = attn_weights.cuda() if self.use_cuda else attn_weights
+        return attn_weights
+
+    def score(self, hidden, encoder_output):
+        energy = self.attn_layer(torch.cat((hidden.squeeze(0), encoder_output), 1))
+        energy = self.tanh(energy)
+        energy = torch.mm(energy, self.beta)
+        return energy
