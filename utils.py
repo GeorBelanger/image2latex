@@ -8,6 +8,7 @@ import math
 import linecache
 import datetime
 from random import shuffle
+import ipdb
 
 
 def timeSince(since, percent):
@@ -27,9 +28,9 @@ def timeSince(since, percent):
 class Tokenizer():
     """ Construct the dictionary of different tokens encountered in the math
     formulas used for training"""
-    def __init__(self):
-        self.vocab2id = {"<SOS>": 0, "<EOS>": 1}
-        self.id2vocab = ["<SOS>", "<EOS>"]
+    def __init__(self, initial_id2voc, initial_voc2id):
+        self.vocab2id = initial_voc2id
+        self.id2vocab = initial_id2voc
 
     def add_token_to_vocab(self, token):
         if token not in self.vocab2id:
