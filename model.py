@@ -92,6 +92,7 @@ class EncoderBRNN(nn.Module):
         # The number of layers used is 2*num_layers_encoder
         # because its a bidirectional RNN
         # enable Variables of hidden state to be used by CUDA
+        """
         if self.use_cuda:
             hiddens = [(Variable(torch.zeros(2*num_layers_encoder,
                        list_rows[0].size(1), hidden_dim_encoder // 2)).cuda(),
@@ -106,6 +107,21 @@ class EncoderBRNN(nn.Module):
                                             list_rows[0].size(1),
                                             hidden_dim_encoder // 2)))
                        for i in range(len(list_rows))]
+        """
+        # Positional embeddings
+        if self.use_cuda:
+            hiddens = [(nn.Parameter(torch.randn(2*num_layers_encoder,
+                        list_rows[0].size(1), hidden_dim_encoder // 2), requires_grad=True).cuda(),
+                        nn.Parameter(torch.randn(2*num_layers_encoder,
+                                                 list_rows[0].size(1), hidden_dim_encoder // 2), requires_grad=True).cuda())
+                       for i in range(len(list_rows))]
+        else:
+            hiddens = [(nn.Parameter(torch.randn(2*num_layers_encoder,
+                        list_rows[0].size(1), hidden_dim_encoder // 2), requires_grad=True),
+                        nn.Parameter(torch.randn(2*num_layers_encoder,
+                                                 list_rows[0].size(1), hidden_dim_encoder // 2), requires_grad=True))
+                       for i in range(len(list_rows))]
+
         return hiddens
 
     def forward(self, list_rows):
@@ -250,14 +266,14 @@ class Attn(nn.Module):
 
         # Create variable to store attention energies
         attn_energies = Variable(torch.zeros(seq_len, batch_size, 1))
+        attn_energies = attn_energies.cuda() if self.use_cuda else attn_energies
 
         # Calculate energies for encoder outputs
         for i in range(seq_len):
             attn_energies[i] = self.score(hidden, encoder_outputs[i])
 
         # Normalize energies to weights in range 0 to 1
-        attn_weights = F.softmax(attn_energies.permute(0, 2, 1))
-        attn_weights = attn_weights.cuda() if self.use_cuda else attn_weights
+        attn_weights = F.softmax(attn_energies.permute(0, 2, 1), dim=0)
         return attn_weights
 
     def score(self, hidden, encoder_output):
