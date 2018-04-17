@@ -29,7 +29,9 @@ class DataLoader(object):
                  max_encoder_l_h,
                  max_encoder_l_w,
                  max_decoder_l,
-                 max_vocab_size):
+                 max_vocab_size,
+                 initial_id2voc,
+                 initial_voc2id):
 
         # folder with processed images
         self.data_base_dir = data_base_dir
@@ -42,7 +44,7 @@ class DataLoader(object):
         self.max_decoder_l = max_decoder_l
         self.min_aspect_ratio = 0.5
         self.vocab_size = max_vocab_size
-        self.tokenizer = Tokenizer()
+        self.tokenizer = Tokenizer(initial_id2voc, initial_voc2id)
         # buffer to save groups of batches with same width and height
         self.buffer = defaultdict(lambda: defaultdict(list))
 
@@ -72,6 +74,7 @@ class DataLoader(object):
         for m in range(len(buf[img_width][img_height])):
             num_nonzer = (num_nonzer +
                           len(buf[img_width][img_height][m][1]) - 2)
+
             for j in range(len(buf[img_width][img_height][m][1])-1):
                 targets[m][j] = buf[img_width][img_height][m][1][j]
                 targets_eval[m][j] = buf[img_width][img_height][m][1][j+1]
