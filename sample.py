@@ -14,6 +14,8 @@ from random import shuffle
 from model import CNN
 from model import EncoderBRNN
 from model import AttnDecoderRNN
+from model import Attn
+import token_dictionary
 
 from utils import timeSince, make_one_hot_vector_from_index
 
@@ -57,7 +59,7 @@ parser.add_argument('--max_encoder_l_w', type=float, default=64,
 parser.add_argument('--max_decoder_l', type=float, default=150,
                     help='Maximum permited size (number of tokens) for the \
                           associated latex formula')
-parser.add_argument('--max_vocab_size', type=float, default=500,
+parser.add_argument('--max_vocab_size', type=float, default=555,
                     help='Maximum number of tokens in vocabulary')
 # Hyperparameters
 parser.add_argument('--num_epochs', type=int, default=5,
@@ -80,6 +82,7 @@ parser.add_argument('--max_length_encoder', type=int, default=1000)
 parser.add_argument('--output_dim_decoder', type=int, default=1000)
 parser.add_argument('--num_layers_decoder', type=int, default=3)
 parser.add_argument('--max_length_decoder', type=int, default=1000)
+parser.add_argument('--embedding_size', type=int, default=80)
 
 # parse arguments
 args = parser.parse_args()
@@ -116,43 +119,50 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
 
     # Calculate the first hidden vector of the decoder LSTM
     (decoder_hidden, decoder_cell_state) = decoder.init_hidden_cell(batch_size, encoder.hidden_dim_encoder)
+    decoder_context_output = decoder.init_context_output(batch_size, encoder.hidden_dim_encoder)
 
-    # for di in range(targets.size(1)):
+    # save values for evaluation
+    predicted_index = []
+    actual_index = []
 
-    #     # Take the di-th target for each batch
-    #     decoder_input = targets.narrow(1, di, 1)
-    #     decoder_input = torch.LongTensor(decoder_input.numpy().astype(int))
-    #     decoder_input = Variable(decoder_input)
-    #     decoder_input = decoder_input.cuda() if use_cuda else decoder_input
+    for di in range(targets.size(1)):
 
-    #     # Take the di-th target_eval for each batch
-    #     decoder_eval = targets_eval.narrow(1, di, 1)
-    #     decoder_eval = torch.LongTensor(decoder_eval.numpy().astype(int))
-    #     decoder_eval = Variable(decoder_eval.squeeze())
-    #     decoder_eval = decoder_eval.cuda() if use_cuda else decoder_eval
+        # Take the di-th target for each batch
+        decoder_input = targets.narrow(1, di, 1)
+        decoder_input = torch.LongTensor(decoder_input.numpy().astype(int))
+        decoder_input = Variable(decoder_input)
+        decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
-    # loss += criterion(decoder_output, decoder_eval)
-    decoder_output, decoder_hidden, decoder_cell_state = decoder(Variable(targets),
-                                                                 encoder_outputs,
-                                                                 decoder_hidden,
-                                                                 decoder_cell_state)
-    longest_target = targets.size()[1]
-    decoder_output_important = decoder_output[:int(longest_target)]
+        # Take the di-th target_eval for each batch
+        decoder_eval = targets_eval.narrow(1, di, 1)
+        decoder_eval = torch.LongTensor(decoder_eval.numpy().astype(int))
+        decoder_eval = Variable(decoder_eval.squeeze())
+        decoder_eval = decoder_eval.cuda() if use_cuda else decoder_eval
 
-    targets_output_view = Variable(targets_eval.long()).view(-1)
-    print(targets_output_view.size())
-    print(decoder_output_important.size())
-    decoder_output_view = decoder_output_important.view(targets_output_view.size()[0], -1)
+        (decoder_output,
+         decoder_context_output,
+         decoder_hidden,
+         decoder_cell_state) = decoder(decoder_input,
+                                       decoder_context_output,
+                                       decoder_hidden,
+                                       decoder_cell_state,
+                                       encoder_outputs)
+        loss += criterion(decoder_output, decoder_eval)
 
-    loss += criterion(decoder_output_view, targets_output_view)
-    # print("Line 145 sample.py, about to call backwards")
-    # print(torch.cuda.memory_allocated())
+        # save values for evaluation
+        if use_cuda:
+            predicted_index.append(torch.max(decoder_output.data, 1)[1][0])
+            actual_index.append(decoder_eval.data[0])
+        else:
+            predicted_index.append(torch.max(decoder_output.data, 1)[1][0])
+            actual_index.append(decoder_eval.data[0])
+
     loss.backward()
     cnn_optimizer.step()
     encoder_optimizer.step()
     decoder_optimizer.step()
 
-    return loss.data[0]
+    return loss.data[0]/targets.size(1), predicted_index, actual_index
 
 
 def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
@@ -180,6 +190,7 @@ def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
 
     # Calculate the first hidden vector of the decoder LSTM
     (decoder_hidden, decoder_cell_state) = decoder.init_hidden_cell(batch_size, encoder.hidden_dim_encoder)
+    decoder_context_output = decoder.init_context_output(batch_size, encoder.hidden_dim_encoder)
 
     # teacher forcing: feed the target as the next input
     # save values for evaluation
@@ -194,19 +205,31 @@ def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
 
     beam_size = 5
     # first pass of decoder
-    initial_output, initial_hidden, initial_cell = decoder(decoder_input,
-                                                           encoder_outputs,
-                                                           decoder_hidden,
-                                                           decoder_cell_state)
+    (initial_output,
+     initial_context_output,
+     initial_hidden,
+     initial_cell_state) = decoder(decoder_input,
+                                   decoder_context_output,
+                                   decoder_hidden,
+                                   decoder_cell_state,
+                                   encoder_outputs)
+
     # take the top elements (most probable)
     top_beam_size = torch.topk(initial_output, beam_size)
     sequences = []
     # loop through the probable elements
     for i in range(0, beam_size):
         # append the top index, log_probability, hidden and cell
-        sequences.append(([top_beam_size[1][0].data[i]], -top_beam_size[0][0].data[i], initial_hidden, initial_cell))
+        sequences.append(([top_beam_size[1][0].data[i]],
+                          -top_beam_size[0][0].data[i],
+                          initial_hidden,
+                          initial_cell_state,
+                          initial_context_output))
 
-    # sequences will look like: [([token_index_for_seq_element_1, token_index_for_seq_element_2, ...], beam_heuristic_for_sequence, last_hidden, last_cell]
+    # sequences will look like: [([token_index_for_seq_element_1,
+    #                              token_index_for_seq_element_2, ...],
+    #                              beam_heuristic_for_sequence,
+    #                              last_hidden, last_cell, last_context_output]
 
     # we have our starting elements already in sequences
     for decoder_input_index in range(max_length-1):
@@ -224,19 +247,26 @@ def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
 
                 last_hidden = sequences[beam_index][2]
                 last_cell = sequences[beam_index][3]
+                last_context_output = sequences[beam_index][4]
 
                 # decoder_output is [prob_for_vocab_element_1, prob_for_vocab_element_2, etc.]
-                decoder_output, decoder_hidden, decoder_cell_state = decoder(decoder_input,
-                                                                             encoder_outputs,
-                                                                             last_hidden,
-                                                                             last_cell)
+                (decoder_output,
+                 decoder_context_output,
+                 decoder_hidden,
+                 decoder_cell_state) = decoder(decoder_input,
+                                               last_context_output,
+                                               last_hidden,
+                                               last_cell,
+                                               encoder_outputs)
 
                 # Take the top 5 most probable vocab tokens
                 top_beam_size = torch.topk(decoder_output, beam_size)
 
                 for j in range(0, beam_size):
-                    new_sequences.append((associated_sequence + [top_beam_size[1][0].data[j]], associated_sequence_score*-top_beam_size[0][0].data[j],
-                                          decoder_hidden, decoder_cell_state))
+                    new_sequences.append((associated_sequence + [top_beam_size[1][0].data[j]],
+                                          associated_sequence_score*-top_beam_size[0][0].data[j],
+                                          decoder_hidden, decoder_cell_state,
+                                          decoder_context_output))
 
         # maybe these have to go out of the loop
         sorted_new_sequences = sorted(new_sequences, key=lambda x: x[1])
@@ -275,6 +305,7 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader,
 
     data_generator = data_loader.create_data_generator(args.batch_size,
                                                        args.train_path)
+
     data_generator2 = data_loader_eval.create_data_generator(args.batch_size_eval,
                                                              args.validate_path)
 
@@ -283,10 +314,14 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader,
     for iter in range(1, n_iters+1):
         (images, targets, targets_eval, num_nonzer,
          img_paths) = next(data_generator)
-        loss = train(images, targets, targets_eval, cnn, encoder,
-                     decoder, cnn_optimizer, encoder_optimizer,
-                     decoder_optimizer, criterion,
-                     args.max_length_encoder, use_cuda)
+        loss, predicted_index, actual_index = train(images, targets,
+                                                    targets_eval, cnn, encoder,
+                                                    decoder, cnn_optimizer,
+                                                    encoder_optimizer,
+                                                    decoder_optimizer,
+                                                    criterion,
+                                                    args.max_length_encoder,
+                                                    use_cuda)
 
         print_loss_total += loss
 
@@ -300,11 +335,15 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader,
                                          iter, iter / float(n_iters) * 100,
                                          print_loss_avg))
 
+            print("Predicted Tokens")
+            print([data_loader.tokenizer.id2vocab[i] for i in predicted_index])
+            print("Actual Tokens")
+            print([data_loader.tokenizer.id2vocab[i] for i in actual_index])
+            """
             (images, targets, targets_eval,
              num_nonzer, img_paths) = next(data_generator2)
 
             # call evaluate function with beam search
-            """
             predicted_index, actual_index = evaluate(images, targets,
                                                      targets_eval, cnn,
                                                      encoder, decoder,
@@ -333,12 +372,14 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader,
 dataloader = DataLoader(args.data_base_dir, args.label_path,
                         args.max_aspect_ratio, args.max_encoder_l_h,
                         args.max_encoder_l_w, args.max_decoder_l,
-                        args.max_vocab_size)
+                        args.max_vocab_size, token_dictionary.id2voc,
+                        token_dictionary.voc2id)
 
 dataloader_eval = DataLoader(args.data_base_dir, args.label_path,
                              args.max_aspect_ratio, args.max_encoder_l_h,
                              args.max_encoder_l_w, args.max_decoder_l,
-                             args.max_vocab_size)
+                             args.max_vocab_size, token_dictionary.id2voc,
+                             token_dictionary.voc2id)
 
 # Create the modules of the algorithm
 cnn1 = CNN()
@@ -346,12 +387,21 @@ encoder1 = EncoderBRNN(args.num_layers_encoder,
                        args.hidden_dim_encoder, use_cuda)
 decoder1 = AttnDecoderRNN(args.hidden_dim_encoder, args.output_dim_decoder,
                           args.num_layers_decoder, args.max_length_decoder,
-                          dataloader.vocab_size, use_cuda)
+                          dataloader.vocab_size, args.embedding_size, use_cuda)
+
+ipdb.set_trace()
+model_parameters_cnn = filter(lambda p: p.requires_grad, cnn1.parameters())
+params_cnn = sum([np.prod(p.size()) for p in model_parameters_cnn])
+model_parameters_encoder = filter(lambda p: p.requires_grad, encoder1.parameters())
+params_encoder = sum([np.prod(p.size()) for p in model_parameters_encoder])
+model_parameters_decoder = filter(lambda p: p.requires_grad, decoder1.parameters())
+params_decoder = sum([np.prod(p.size()) for p in model_parameters_decoder])
 
 if use_cuda:
     cnn1 = cnn1.cuda()
     encoder1 = encoder1.cuda()
     decoder1 = decoder1.cuda()
+    decoder1.attn = decoder1.attn.cuda()
 
 trainIters(args.batch_size, cnn1, encoder1, decoder1, dataloader, dataloader_eval,
            args.learning_rate, n_iters=15000, print_every=1,
