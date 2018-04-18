@@ -6,7 +6,8 @@ import ipdb
 
 
 class CNN(nn.Module):
-    """Create the CNN model:
+    """Create the convolutional network that includes convolutional
+    layers, max pooling layers and batch normalization
     Layer 1: CONV2D -> RELU ->  MAXPOOL ->
     Layer 2: CONV2D -> RELU -> MAXPOOL ->
     Layer 3: CONV2D -> BATCHNORM -> RELU ->
@@ -54,14 +55,24 @@ class CNN(nn.Module):
         Returns:
         list of #H rows of the image features after
         passing throught the CNN
-        Each row has shape (W, batch_size, 512)"""
+        Each row has shape (W, batch_size, 512)
+        where H and W are the reduced height and width
+        (reduced by a factor of 8 due to the max pooling layers)"""
+        # Normalize inputs like Deng et al.
+        x = x-128.0
+        x = x/128.0
+        # Convolutional network
         out = self.layer1CNN(x)
         out = self.layer2CNN(out)
         out = self.layer3CNN(out)
         out = self.layer4CNN(out)
         out = self.layer5CNN(out)
         out = self.layer6CNN(out)
+        # Permute to go from (batch_sizeXchannelsXreduced_heightXreduced_width)
+        # to (reduced_heightXreduced_widthXbatch_sizeXchannels)
         out = out.permute(2, 3, 0, 1)
+        # Unbind to have reduced_height number of rows of
+        # size (reduced_heightXbatch_sizeXchannels)
         list_rows = torch.unbind(out, dim=0)
 
         return list_rows
@@ -82,77 +93,65 @@ class EncoderBRNN(nn.Module):
         super(EncoderBRNN, self).__init__()
         self.hidden_dim_encoder = hidden_dim_encoder
         self.num_layers_encoder = num_layers_encoder
-        self.brnn = nn.LSTM(512, hidden_dim_encoder // 2,
+        self.output_channels_cnn = 512
+        self.brnn = nn.LSTM(self.output_channels_cnn, hidden_dim_encoder // 2,
                             num_layers_encoder, bidirectional=True)
         self.use_cuda = use_cuda
 
     def init_hidden_cell(self, list_rows, num_layers_encoder,
                          hidden_dim_encoder):
-        # Initialize hidden states
-        # The number of layers used is 2*num_layers_encoder
-        # because its a bidirectional RNN
-        # enable Variables of hidden state to be used by CUDA
-        """
-        if self.use_cuda:
-            hiddens = [(Variable(torch.zeros(2*num_layers_encoder,
-                       list_rows[0].size(1), hidden_dim_encoder // 2)).cuda(),
-                       Variable(torch.zeros(2*num_layers_encoder,
-                                            list_rows[0].size(1),
-                                            hidden_dim_encoder // 2)).cuda())
-                       for i in range(len(list_rows))]
-        else:
-            hiddens = [(Variable(torch.zeros(2*num_layers_encoder,
-                       list_rows[0].size(1), hidden_dim_encoder // 2)),
-                       Variable(torch.zeros(2*num_layers_encoder,
-                                            list_rows[0].size(1),
-                                            hidden_dim_encoder // 2)))
-                       for i in range(len(list_rows))]
-        """
-        # Positional embeddings
-        if self.use_cuda:
-            hiddens = [(nn.Parameter(torch.randn(2*num_layers_encoder,
-                        list_rows[0].size(1), hidden_dim_encoder // 2), requires_grad=True).cuda(),
-                        nn.Parameter(torch.randn(2*num_layers_encoder,
-                                                 list_rows[0].size(1), hidden_dim_encoder // 2), requires_grad=True).cuda())
-                       for i in range(len(list_rows))]
-        else:
-            hiddens = [(nn.Parameter(torch.randn(2*num_layers_encoder,
-                        list_rows[0].size(1), hidden_dim_encoder // 2), requires_grad=True),
-                        nn.Parameter(torch.randn(2*num_layers_encoder,
-                                                 list_rows[0].size(1), hidden_dim_encoder // 2), requires_grad=True))
-                       for i in range(len(list_rows))]
+        """Initialize hidden state for the Bidirectional RNN
+        Note: because its bidirectional, we multiply by 2 the number
+        of layers (i.e. 2*num_layers_encoder), but divide the hidden
+        dimension by 2 (i.e. hidden_dim_encoder //2)"""
 
-        return hiddens
+        batch_size = list_rows[0].size(1)
+        if self.use_cuda:
+            hidden_state = Variable(torch.zeros(2*num_layers_encoder,
+                                                batch_size,
+                                                hidden_dim_encoder // 2)).cuda()
+            cell_state = Variable(torch.zeros(2*num_layers_encoder,
+                                              batch_size,
+                                              hidden_dim_encoder // 2)).cuda()
+        else:
+            hidden_state = Variable(torch.zeros(2*num_layers_encoder,
+                                                batch_size,
+                                                hidden_dim_encoder // 2))
+            cell_state = Variable(torch.zeros(2*num_layers_encoder,
+                                              batch_size,
+                                              hidden_dim_encoder // 2))
+        hidden = (hidden_state, cell_state)
+        return hidden
 
     def forward(self, list_rows):
-        """Make the forward pass for the Bidirectional RNN
+        """Make the forward pass for the Bidirectional RNN.
+        That is, for each of the H rows, we pass the respective W tensors
+        through the BRNN and get W output tensors. Finally we concatenate the
+        results of all the rows and get H*W tensors.
         Arguments:
             list_rows -- list of H rows of the image features after
             passing through the CNN
             Each row has shape (W, batch_size, 512)
-            (H and W are the integral part of the original height
-            and width of the image divided by 8)
         Returns:
-            list of H tensor of shape (W, batch_size, 512)
-            Each tensor is the output that the Bidirectional RNN generated for
-            each row in list_rows for each point in time t = 1, 2, ..., W
-            (H and W are the integral part of the original height and
-            width of the image divided by 8)"""
+            Tensor of shape (H*W, batch_size, 512)
 
-        hiddens = self.init_hidden_cell(list_rows, self.num_layers_encoder,
-                                        self.hidden_dim_encoder)
+            Note: (H and W are the integral part of the original height and
+            width of the image divided by 8)"""
 
         # List for outputs of encoder
         list_outputs = []
-        list_hiddens = []
 
         # Pass each row through the brnn
-        for i, row in enumerate(list_rows):
-            output, hidden = self.brnn(row, hiddens[i])
+        for row in list_rows:
+            initial_hidden = self.init_hidden_cell(list_rows,
+                                                   self.num_layers_encoder,
+                                                   self.hidden_dim_encoder)
+
+            output, hidden = self.brnn(row, initial_hidden)
 
             list_outputs.append(output)
-            list_hiddens.append(hidden)
 
+        # Concatenate the outputs of passing each row through the BRNN
         outputs = torch.cat(list_outputs, 0)
 
         return outputs
