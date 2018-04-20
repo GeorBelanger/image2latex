@@ -161,15 +161,15 @@ class AttnDecoderRNN(nn.Module):
     """Create the recurrent neural network decoder with an attention mechanism
     Arguments:
         hidden_size (int): hidden size of the decoder
-        output_size (int): output size of the decoder
         n_layers (int): number of layers of the decoder
-        max_length: maximum length of encoder_outputs
-        vocab_size: size of vocabulary of tokens
+        max_length (int): maximum length of encoder_outputs
+        vocab_size (int): size of vocabulary of tokens
+        embedding_size (int): size of embedding for tokens
+        use_cuda (boolean): indicates whether the model is using a GPU
     """
 
     def __init__(self,
                  hidden_size,
-                 output_size,
                  n_layers,
                  max_length,
                  vocab_size,
@@ -226,7 +226,7 @@ class AttnDecoderRNN(nn.Module):
         # Permute token_embedded to have size 1xBatch_sizexHidden_dim
         token_embedded = token_embedded.permute(1, 0, 2)
 
-        # Combine embedded input word and last context, run through LSTM
+        # Concatenate embedded input word and last context, run through LSTM
         rnn_input = torch.cat((token_embedded, last_output_context), 2)
         rnn_output, (hidden, cell_state) = self.lstm(rnn_input,
                                                      (last_hidden, last_cell_state))
@@ -254,7 +254,6 @@ class Attn(nn.Module):
         super(Attn, self).__init__()
         self.hidden_size = hidden_size
         self.attn_layer = nn.Linear(self.hidden_size*2, self.hidden_size)
-        # self.beta = nn.Parameter(torch.FloatTensor(hidden_size, 1))
         self.beta = nn.Parameter(torch.randn(hidden_size, 1))
         self.tanh = nn.Tanh()
         self.use_cuda = use_cuda
@@ -271,12 +270,14 @@ class Attn(nn.Module):
         for i in range(seq_len):
             attn_energies[i] = self.score(hidden, encoder_outputs[i])
 
-        # Normalize energies to weights in range 0 to 1
+        # Normalize energies to get weights (probabilities) in range 0 to 1
         attn_weights = F.softmax(attn_energies.permute(0, 2, 1), dim=0)
         return attn_weights
 
     def score(self, hidden, encoder_output):
+        # Concatenate hidden and encoder output and apply linear layer
         energy = self.attn_layer(torch.cat((hidden.squeeze(0), encoder_output), 1))
         energy = self.tanh(energy)
+        # Multiply by vector beta to obtain a scalar for each batch
         energy = torch.mm(energy, self.beta)
         return energy
