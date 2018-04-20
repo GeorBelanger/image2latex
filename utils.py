@@ -8,6 +8,7 @@ import math
 import linecache
 import datetime
 from random import shuffle
+import torch
 import ipdb
 
 
@@ -77,3 +78,22 @@ def make_one_hot_vector_from_index(index, vocab_size):
     one_hot = numpy.zeros((vocab_size, 1))
     one_hot[index] = 1
     return one_hot
+
+
+def tokens_from_index_list(index_list, id2vocab):
+    """Given a list of index, get the respective token list"""
+    token_list = []
+    for i in range(len(index_list)):
+        if index_list[i] > len(id2vocab)-1:
+            token_list.append("<UNK>")
+        else:
+            token_list.append(id2vocab[index_list[i]])
+    return token_list
+
+
+def slice_as_longtensor(targets, index):
+    """Given a batch of targets, returns a slice of it as
+    a torch longtensor """
+    sliced_targets = targets.narrow(1, index, 1)
+    sliced_targets_long = torch.LongTensor(sliced_targets.numpy().astype(int))
+    return sliced_targets_long
