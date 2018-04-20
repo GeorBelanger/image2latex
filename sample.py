@@ -17,7 +17,7 @@ from model import AttnDecoderRNN
 from model import Attn
 import token_dictionary
 
-from utils import timeSince, make_one_hot_vector_from_index
+from utils import timeSince, tokens_from_index_list, slice_as_longtensor
 
 use_cuda = torch.cuda.is_available()
 
@@ -59,20 +59,21 @@ parser.add_argument('--max_encoder_l_w', type=float, default=64,
 parser.add_argument('--max_decoder_l', type=float, default=150,
                     help='Maximum permited size (number of tokens) for the \
                           associated latex formula')
-parser.add_argument('--max_vocab_size', type=float, default=555,
+parser.add_argument('--max_vocab_size', type=float, default=600,
                     help='Maximum number of tokens in vocabulary')
 # Hyperparameters
-parser.add_argument('--num_epochs', type=int, default=5,
+parser.add_argument('--num_epochs', type=int, default=20,
                     help='Number of epochs for training')
 parser.add_argument('--batch_size', type=int, default=5,
                     help='Batch size for training')
 parser.add_argument('--batch_size_eval', type=int, default=1,
                     help='Batch size for evaluation')
-parser.add_argument('--learning_rate', type=float, default=0.001,
+parser.add_argument('--learning_rate', type=float, default=0.01,
                     help='Initial learning rate for training')
-
+parser.add_argument('--gradient_clip', type=float, default=5.0,
+                    help='Initial learning rate for training')
 # Encoder
-parser.add_argument('--num_layers_encoder', type=int, default=5,
+parser.add_argument('--num_layers_encoder', type=int, default=1,
                     help='Number of layers in the bidirectional recurrent \
                           neural network used for encoding')
 parser.add_argument('--hidden_dim_encoder', type=int, default=512)
@@ -80,7 +81,7 @@ parser.add_argument('--max_length_encoder', type=int, default=1000)
 
 # Decoder
 parser.add_argument('--output_dim_decoder', type=int, default=1000)
-parser.add_argument('--num_layers_decoder', type=int, default=3)
+parser.add_argument('--num_layers_decoder', type=int, default=1)
 parser.add_argument('--max_length_decoder', type=int, default=1000)
 parser.add_argument('--embedding_size', type=int, default=80)
 
@@ -89,12 +90,13 @@ args = parser.parse_args()
 
 
 def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
-          encoder_optimizer, decoder_optimizer, criterion, max_length,
-          use_cuda):
+          encoder_optimizer, decoder_optimizer, gradient_clip, criterion,
+          max_length, use_cuda):
     cnn_optimizer.zero_grad()
     encoder_optimizer.zero_grad()
     decoder_optimizer.zero_grad()
     batch_size = images.size(0)
+    target_length = targets.size(1)
 
     images = Variable(images)
     images = images.cuda() if use_cuda else images
@@ -125,18 +127,15 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
     predicted_index = []
     actual_index = []
 
-    for di in range(targets.size(1)):
+    for di in range(target_length):
 
         # Take the di-th target for each batch
-        decoder_input = targets.narrow(1, di, 1)
-        decoder_input = torch.LongTensor(decoder_input.numpy().astype(int))
-        decoder_input = Variable(decoder_input)
+        decoder_input = Variable(slice_as_longtensor(targets, di))
         decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
         # Take the di-th target_eval for each batch
-        decoder_eval = targets_eval.narrow(1, di, 1)
-        decoder_eval = torch.LongTensor(decoder_eval.numpy().astype(int))
-        decoder_eval = Variable(decoder_eval.squeeze())
+        decoder_eval = Variable(slice_as_longtensor(targets_eval,
+                                                    di).squeeze())
         decoder_eval = decoder_eval.cuda() if use_cuda else decoder_eval
 
         (decoder_output,
@@ -150,6 +149,7 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
         loss += criterion(decoder_output, decoder_eval)
 
         # save values for evaluation
+
         if use_cuda:
             predicted_index.append(torch.max(decoder_output.data, 1)[1][0])
             actual_index.append(decoder_eval.data[0])
@@ -158,11 +158,14 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
             actual_index.append(decoder_eval.data[0])
 
     loss.backward()
+    torch.nn.utils.clip_grad_norm(cnn.parameters(), gradient_clip)
+    torch.nn.utils.clip_grad_norm(encoder.parameters(), gradient_clip)
+    torch.nn.utils.clip_grad_norm(decoder.parameters(), gradient_clip)
     cnn_optimizer.step()
     encoder_optimizer.step()
     decoder_optimizer.step()
 
-    return loss.data[0]/targets.size(1), predicted_index, actual_index
+    return loss.data[0]/target_length, predicted_index, actual_index
 
 
 def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
@@ -171,6 +174,7 @@ def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
     images = Variable(images)
     images = images.cuda() if use_cuda else images
     batch_size = images.size(0)
+    target_length = targets.size(1)
 
     # Forward Pass
     # Convolutional network
@@ -198,9 +202,7 @@ def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
     actual_index = []
 
     # start decoder_input with SOS_token that is already in targets
-    decoder_input = targets.narrow(1, 0, 1)
-    decoder_input = torch.LongTensor(decoder_input.numpy().astype(int))
-    decoder_input = Variable(decoder_input)
+    decoder_input = Variable(slice_as_longtensor(targets, 0))
     decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
     beam_size = 5
@@ -273,10 +275,9 @@ def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
         sequences = sorted_new_sequences[:5]
 
         # Take the target_eval for each batch
-        if decoder_input_index < targets.size(1):
-            decoder_eval = targets_eval.narrow(1, decoder_input_index, 1)
-            decoder_eval = torch.LongTensor(decoder_eval.numpy().astype(int))
-            decoder_eval = Variable(decoder_eval.squeeze())
+        if decoder_input_index < target_length:
+            decoder_eval = Variable(slice_as_longtensor(targets_eval,
+                                                        decoder_input_index))
             decoder_eval = decoder_eval.cuda() if use_cuda else decoder_eval
 
             if use_cuda:
@@ -287,9 +288,11 @@ def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
     return sequences[0][0], actual_index
 
 
-def trainIters(batch_size, cnn, encoder, decoder, data_loader,
-               data_loader_eval, learning_rate, n_iters, print_every,
-               use_cuda):
+def trainIters(num_epochs, batch_size, cnn, encoder, decoder, data_loader,
+               data_loader_eval, learning_rate, gradient_clip,
+               n_iters, print_every, use_cuda,
+               evaluate_with_beam_search=False):
+
     start = time.time()
     print_losses = []
     print_loss_total = 0
@@ -303,67 +306,75 @@ def trainIters(batch_size, cnn, encoder, decoder, data_loader,
 
     criterion = nn.NLLLoss(ignore_index=0)
 
-    data_generator = data_loader.create_data_generator(args.batch_size,
-                                                       args.train_path)
+    for epoch in range(1, num_epochs+1):
+        data_generator = data_loader.create_data_generator(args.batch_size,
+                                                           args.train_path)
+        data_generator2 = data_loader_eval.create_data_generator(args.batch_size_eval,
+                                                                 args.validate_path)
+        best_loss = None
 
-    data_generator2 = data_loader_eval.create_data_generator(args.batch_size_eval,
-                                                             args.validate_path)
+        for iter in range(1, n_iters+1):
+            (images, targets, targets_eval, num_nonzer,
+             img_paths) = next(data_generator)
+            loss, predicted_index, actual_index = train(images, targets,
+                                                        targets_eval, cnn, encoder,
+                                                        decoder, cnn_optimizer,
+                                                        encoder_optimizer,
+                                                        decoder_optimizer,
+                                                        gradient_clip,
+                                                        criterion,
+                                                        args.max_length_encoder,
+                                                        use_cuda)
 
-    best_loss = None
+            print_loss_total += loss
 
-    for iter in range(1, n_iters+1):
-        (images, targets, targets_eval, num_nonzer,
-         img_paths) = next(data_generator)
-        loss, predicted_index, actual_index = train(images, targets,
-                                                    targets_eval, cnn, encoder,
-                                                    decoder, cnn_optimizer,
-                                                    encoder_optimizer,
-                                                    decoder_optimizer,
-                                                    criterion,
-                                                    args.max_length_encoder,
-                                                    use_cuda)
+            if iter % print_every == 0:
 
-        print_loss_total += loss
+                print_loss_avg = print_loss_total / print_every
+                print_losses.append(print_loss_avg)
+                print_loss_total = 0
 
-        if iter % print_every == 0:
+                print('epoch #'+'%d %s (%d %d%%) %.4f' % (epoch,
+                                                          timeSince(start,
+                                                                   iter/float(n_iters)),
+                                                          iter,
+                                                          iter / float(n_iters) * 100,
+                                                          print_loss_avg))
 
-            print_loss_avg = print_loss_total / print_every
-            print_losses.append(print_loss_avg)
-            print_loss_total = 0
+                print("Predicted Tokens")
+                print(tokens_from_index_list(predicted_index,
+                                             data_loader.tokenizer.id2vocab))
+                print("Actual Tokens")
+                print(tokens_from_index_list(actual_index,
+                                             data_loader.tokenizer.id2vocab))
 
-            print('%s (%d %d%%) %.4f' % (timeSince(start, iter/float(n_iters)),
-                                         iter, iter / float(n_iters) * 100,
-                                         print_loss_avg))
+                if evaluate_with_beam_search:
+                    (images, targets, targets_eval,
+                     num_nonzer, img_paths) = next(data_generator2)
 
-            print("Predicted Tokens")
-            print([data_loader.tokenizer.id2vocab[i] for i in predicted_index])
-            print("Actual Tokens")
-            print([data_loader.tokenizer.id2vocab[i] for i in actual_index])
-            """
-            (images, targets, targets_eval,
-             num_nonzer, img_paths) = next(data_generator2)
+                    # call evaluate function with beam search
+                    predicted_index, actual_index = evaluate(images, targets,
+                                                             targets_eval, cnn,
+                                                             encoder, decoder,
+                                                             criterion,
+                                                             args.max_length_encoder,
+                                                             use_cuda)
+                    print("Image Path")
+                    print(img_paths)
+                    print("Predicted Tokens")
+                    print([data_loader.tokenizer.id2vocab[i]
+                           for i in predicted_index])
+                    print("Actual Tokens")
+                    print([data_loader.tokenizer.id2vocab[i]
+                           for i in actual_index])
 
-            # call evaluate function with beam search
-            predicted_index, actual_index = evaluate(images, targets,
-                                                     targets_eval, cnn,
-                                                     encoder, decoder,
-                                                     criterion,
-                                                     args.max_length_encoder,
-                                                     use_cuda)
-            print("Image Path")
-            print(img_paths)
-            print("Predicted Tokens")
-            print([data_loader.tokenizer.id2vocab[i] for i in predicted_index])
-            print("Actual Tokens")
-            print([data_loader.tokenizer.id2vocab[i] for i in actual_index])
-            """
-        if not best_loss or print_loss_avg < best_loss:
-            with open(args.save_cnn, 'wb') as f:
-                torch.save(cnn.state_dict(), f)
-            with open(args.save_encoder, 'wb') as f:
-                torch.save(encoder.state_dict(), f)
-            with open(args.save_decoder, 'wb') as f:
-                torch.save(decoder.state_dict(), f)
+            if not best_loss or print_loss_avg < best_loss:
+                with open(args.save_cnn, 'wb') as f:
+                    torch.save(cnn.state_dict(), f)
+                with open(args.save_encoder, 'wb') as f:
+                    torch.save(encoder.state_dict(), f)
+                with open(args.save_decoder, 'wb') as f:
+                    torch.save(decoder.state_dict(), f)
 
     return print_losses
 
@@ -384,18 +395,14 @@ dataloader_eval = DataLoader(args.data_base_dir, args.label_path,
 # Create the modules of the algorithm
 cnn1 = CNN()
 encoder1 = EncoderBRNN(args.num_layers_encoder,
-                       args.hidden_dim_encoder, use_cuda)
-decoder1 = AttnDecoderRNN(args.hidden_dim_encoder, args.output_dim_decoder,
-                          args.num_layers_decoder, args.max_length_decoder,
-                          dataloader.vocab_size, args.embedding_size, use_cuda)
-
-ipdb.set_trace()
-model_parameters_cnn = filter(lambda p: p.requires_grad, cnn1.parameters())
-params_cnn = sum([np.prod(p.size()) for p in model_parameters_cnn])
-model_parameters_encoder = filter(lambda p: p.requires_grad, encoder1.parameters())
-params_encoder = sum([np.prod(p.size()) for p in model_parameters_encoder])
-model_parameters_decoder = filter(lambda p: p.requires_grad, decoder1.parameters())
-params_decoder = sum([np.prod(p.size()) for p in model_parameters_decoder])
+                       args.hidden_dim_encoder,
+                       use_cuda)
+decoder1 = AttnDecoderRNN(args.hidden_dim_encoder,
+                          args.num_layers_decoder,
+                          args.max_length_decoder,
+                          dataloader.vocab_size,
+                          args.embedding_size,
+                          use_cuda)
 
 if use_cuda:
     cnn1 = cnn1.cuda()
@@ -403,6 +410,6 @@ if use_cuda:
     decoder1 = decoder1.cuda()
     decoder1.attn = decoder1.attn.cuda()
 
-trainIters(args.batch_size, cnn1, encoder1, decoder1, dataloader, dataloader_eval,
-           args.learning_rate, n_iters=15000, print_every=1,
-           use_cuda=use_cuda)
+trainIters(args.num_epochs, args.batch_size, cnn1, encoder1, decoder1,
+           dataloader, dataloader_eval, args.learning_rate, args.gradient_clip,
+           n_iters=15000, print_every=1, use_cuda=use_cuda)
