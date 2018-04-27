@@ -59,7 +59,7 @@ parser.add_argument('--max_encoder_l_w', type=float, default=64,
 parser.add_argument('--max_decoder_l', type=float, default=150,
                     help='Maximum permited size (number of tokens) for the \
                           associated latex formula')
-parser.add_argument('--max_vocab_size', type=float, default=600,
+parser.add_argument('--max_vocab_size', type=float, default=560,
                     help='Maximum number of tokens in vocabulary')
 # Hyperparameters
 parser.add_argument('--num_epochs', type=int, default=20,
@@ -68,9 +68,9 @@ parser.add_argument('--batch_size', type=int, default=5,
                     help='Batch size for training')
 parser.add_argument('--batch_size_eval', type=int, default=1,
                     help='Batch size for evaluation')
-parser.add_argument('--learning_rate', type=float, default=0.01,
+parser.add_argument('--learning_rate', type=float, default=0.001,
                     help='Initial learning rate for training')
-parser.add_argument('--gradient_clip', type=float, default=5.0,
+parser.add_argument('--gradient_clip', type=float, default=1000.0,
                     help='Initial learning rate for training')
 # Encoder
 parser.add_argument('--num_layers_encoder', type=int, default=1,
@@ -92,6 +92,26 @@ args = parser.parse_args()
 def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
           encoder_optimizer, decoder_optimizer, gradient_clip, criterion,
           max_length, use_cuda):
+    """ Makes the forward pass through the cnn, encoder and decoder and then
+    calculates the loss, backpropagates and updates the parameters
+    Arguments:
+      :images: tensor of images with dims (batch_sizeX1XheightXwidth)
+      :targets: tensor with target labels for input with
+      dims (batch_sizeXmax_length_of_batch) (<SOS>, token1, ... tokenN)
+      :targets_eval: tensor with target labels for evaluation with dims
+      (batch_sizeXmax_length_of_batch) (token1, ..., tokenN, <EOS>)
+      :cnn, encoder, decoder: modules of model
+      :cnn_optimizer, encoder_optimizer, decoder_optimizer: model optimizers
+      :gradient_clip: (double) max norm of the gradients
+      :criterion: criterion for measuring the loss function
+      :max_length: (int) maximum sequence length for encoder outputs
+      :use_cuda: (boolean) indicates whether the model is using a GPU
+    Returns:
+      loss per token (double)
+      predicted index (list of predicted tokens)
+      actual index (list of correct index)
+
+    """
     cnn_optimizer.zero_grad()
     encoder_optimizer.zero_grad()
     decoder_optimizer.zero_grad()
@@ -170,6 +190,22 @@ def train(images, targets, targets_eval, cnn, encoder, decoder, cnn_optimizer,
 
 def evaluate(images, targets, targets_eval, cnn, encoder, decoder, criterion,
              max_length, use_cuda):
+    """ Makes the forward pass through the cnn and encoder and goes through the
+    decoder using beam search to get predictions of the tokens given the image
+    Arguments:
+      :images: tensor of images with dims (batch_sizeX1XheightXwidth)
+      :targets: tensor with target labels for input with
+      dims (batch_sizeXmax_length_of_batch) (<SOS>, token1, ... tokenN)
+      :targets_eval: tensor with target labels for evaluation with dims
+      (batch_sizeXmax_length_of_batch) (token1, ..., tokenN, <EOS>)
+      :cnn, encoder, decoder: modules of model
+      :criterion: criterion for measuring the loss function
+      :max_length: (int) maximum sequence length for encoder outputs
+      :use_cuda: (boolean) indicates whether the model is using a GPU
+    Returns:
+      predicted index (list of predicted tokens)
+      actual index (list of correct index)
+    """
 
     images = Variable(images)
     images = images.cuda() if use_cuda else images
@@ -292,6 +328,27 @@ def trainIters(num_epochs, batch_size, cnn, encoder, decoder, data_loader,
                data_loader_eval, learning_rate, gradient_clip,
                n_iters, print_every, use_cuda,
                evaluate_with_beam_search=False):
+    """ Starts a timer, initialize optimizers and criterion, creates the data
+    generators and then repeatedly calls the train function. Next, it prints
+    the average loss and the predicted and actual tokens for an image.
+    If evaluate_with_beam_search is True, it calls the evaluate function to
+    evaluate using beam search.
+    Arguments:
+      :num_epochs: (int) number of epochs of training
+      :batch_size: (int) batch size
+      :cnn, encoder, decoder: modules of model
+      :data_loader: data loader object for training
+      :data_loader_eval: data loader object for evaluation
+      :learning_rate: (double) learning rate
+      :gradient_clip: (double) max norm of the gradients
+      :n_iters: (int) number of iterations for each epoch
+      :print_every: (int) number of iterations between each printing
+      :use_cuda: (boolean) indicates whether the model is using a GPU
+      :evaluate_with_beam_search: (boolean) indicates whether to do evaluation
+       with the beam search
+    Returns:
+      list with loss averages
+    """
 
     start = time.time()
     print_losses = []
@@ -336,10 +393,13 @@ def trainIters(num_epochs, batch_size, cnn, encoder, decoder, data_loader,
 
                 print('epoch #'+'%d %s (%d %d%%) %.4f' % (epoch,
                                                           timeSince(start,
-                                                                   iter/float(n_iters)),
+                                                                    iter/float(n_iters)),
                                                           iter,
                                                           iter / float(n_iters) * 100,
                                                           print_loss_avg))
+                print('Hyperparameters: batch size, lr, gradient clip '+'%d %.4f %d' % (batch_size,
+                                                                                        learning_rate,
+                                                                                        gradient_clip))
 
                 print("Predicted Tokens")
                 print(tokens_from_index_list(predicted_index,
